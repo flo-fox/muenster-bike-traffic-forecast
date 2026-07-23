@@ -36,6 +36,19 @@ regression experiments. Goal here is an actual, active forecasting tool.
 - Store reusable logic in `src/muenster_bike_forecast/`, not inline in
   notebooks.
 
+## Review checklist
+Before treating a step as done, check it from three angles:
+- **Data engineer**: does fetched/raw data get schema-validated? Are missing
+  15-min intervals and per-station gaps handled explicitly, not silently
+  dropped? Are fetch scripts idempotent and reproducible?
+- **Data scientist**: does any train/test split respect time order (no future
+  leaking into past) and station boundaries? Are baseline metrics reported
+  alongside model metrics so improvements are provable, not assumed?
+- **Security analyst**: no hardcoded credentials or tokens, even though
+  current data sources are open/credential-free. Treat fetched CSV/HTTP
+  content as untrusted input (validate shape/types before use, no
+  `eval`/`pickle` on external data).
+
 ## What Claude should avoid
 - Do not add speculative features beyond what is asked.
 - Do not rewrite working code just for style; only touch what is needed.

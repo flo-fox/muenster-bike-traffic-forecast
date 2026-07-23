@@ -1,7 +1,7 @@
-pandas
-requests
-scikit-learn
-matplotlib
-jupyter
-pytest
-black
+pandas==3.0.5
+requests==2.34.2
+scikit-learn==1.9.0
+matplotlib==3.11.1
+jupyter==1.1.1
+pytest==9.1.1
+black==26.5.1
