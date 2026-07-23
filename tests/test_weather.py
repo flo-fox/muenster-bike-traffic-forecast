@@ -389,3 +389,47 @@ def test_save_raw_weather_rejects_unknown_parameter(tmp_path: Path) -> None:
     df = pd.DataFrame({"station_id": ["01766"]})
     with pytest.raises(ValueError):
         weather.save_raw_weather(df, "unknown_parameter", "01766", tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# load_weather_data
+# ---------------------------------------------------------------------------
+
+
+def test_load_weather_data_round_trips_save_raw_weather(tmp_path: Path) -> None:
+    df = pd.DataFrame(
+        {
+            "station_id": ["01766", "01766"],
+            "timestamp": pd.to_datetime(
+                ["2025-01-19 00:00", "2025-01-19 01:00"], utc=True
+            ),
+            "air_temperature_c": [-2.5, -2.8],
+        }
+    )
+    path = weather.save_raw_weather(df, "air_temperature", "01766", tmp_path)
+
+    loaded = weather.load_weather_data(path)
+
+    assert list(loaded["station_id"]) == ["01766", "01766"]
+    assert isinstance(loaded["timestamp"].dtype, pd.DatetimeTZDtype)
+    assert list(loaded["air_temperature_c"]) == [-2.5, -2.8]
+
+
+def test_load_weather_data_preserves_leading_zero_in_station_id(tmp_path: Path) -> None:
+    path = tmp_path / "dwd_air_temperature_01766.csv"
+    path.write_text(
+        "station_id,timestamp,air_temperature_c\n"
+        "01766,2025-01-19 00:00:00+00:00,-2.5\n"
+    )
+
+    loaded = weather.load_weather_data(path)
+
+    assert loaded["station_id"].iloc[0] == "01766"
+
+
+def test_load_weather_data_raises_on_missing_column(tmp_path: Path) -> None:
+    path = tmp_path / "bad.csv"
+    path.write_text("station_id,not_timestamp\n01766,2025-01-19 00:00\n")
+
+    with pytest.raises(weather.WeatherSchemaError):
+        weather.load_weather_data(path)

@@ -568,6 +568,32 @@ def find_missing_hours(
     return pd.DataFrame({timestamp_col: missing})
 
 
+def load_weather_data(path: Path) -> pd.DataFrame:
+    """Load a weather CSV previously written by `save_raw_weather`.
+
+    Args:
+        path: Path to the CSV file.
+
+    Returns:
+        DataFrame with ``station_id`` read back as ``str`` (so a leading
+        zero, e.g. ``"01766"``, is preserved instead of being silently
+        dropped by integer reinterpretation) and ``timestamp`` parsed back
+        to a UTC-aware ``datetime64[ns, UTC]`` column.
+
+    Raises:
+        WeatherSchemaError: if the file is missing the ``station_id`` or
+            ``timestamp`` column.
+    """
+    df = pd.read_csv(path, dtype={"station_id": str})
+    missing_columns = {"station_id", "timestamp"} - set(df.columns)
+    if missing_columns:
+        raise WeatherSchemaError(
+            f"{path} is missing expected column(s): {sorted(missing_columns)}."
+        )
+    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+    return df
+
+
 def save_raw_weather(
     df: pd.DataFrame,
     parameter: str,
