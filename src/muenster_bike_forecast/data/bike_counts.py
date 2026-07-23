@@ -20,6 +20,11 @@ live repo:
 
 All HTTP/CSV content from the source repo is treated as untrusted input and
 is schema-validated before use.
+
+Licensed under Datenlizenz Deutschland – Namensnennung 2.0 (dl-de/by-2-0)
+via the City of Münster's open-data portal; redistribution requires
+attribution. See the README's "Data sources & attribution" section for the
+full citation.
 """
 
 from __future__ import annotations

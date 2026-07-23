@@ -58,6 +58,12 @@ within the winter semester's outer lecture-period window, which
 understates real semester breaks around the turn of the year. Treat
 `is_lecture_period` as "within the official teaching-period window", not
 as a guarantee that lectures are actually held that day.
+
+**Citation**: Ministerium für Kultur und Wissenschaft NRW (MKW),
+https://www.mkw.nrw/service/vorlesungszeiten. Page content is under
+standard copyright; the specific dates transcribed here are used as
+factual reference data. See the README's "Data sources & attribution"
+section.
 """
 
 from __future__ import annotations

@@ -32,6 +32,10 @@ Open question / known limitation: DWD hourly data is genuinely hourly,
 while bike counts are 15-minute. This module intentionally does **not**
 resample or align the two; that is left to a later feature-engineering
 step.
+
+DWD's CDC-OpenData area is licensed CC BY 4.0; attribution to the Deutscher
+Wetterdienst (DWD) is required. See the README's "Data sources &
+attribution" section for the full citation.
 """
 
 from __future__ import annotations

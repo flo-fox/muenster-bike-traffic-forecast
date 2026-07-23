@@ -43,6 +43,10 @@ All HTTP/JSON content from the OpenHolidays API is treated as untrusted
 input and is schema-validated before use, consistent with
 `muenster_bike_forecast.data.bike_counts` and
 `muenster_bike_forecast.data.weather`.
+
+Public holidays via the `holidays` library are MIT-licensed (no
+attribution required). See the README's "Data sources & attribution"
+section for the full citation of both sources.
 """
 
 from __future__ import annotations
