@@ -12,10 +12,13 @@ regression experiments. Goal here is an actual, active forecasting tool.
 - `pandas` for data, `requests` for HTTP
 - ML: `HistGradientBoostingRegressor` (sklearn, notebook 08) and `LightGBM`
   (notebook 09) as the tree-ensemble candidates, `Prophet` (notebook 10) as
-  a per-station seasonal-decomposition alternative — see "Model selection
-  rationale" below for why these and not linear regression/a single
-  tree/SVM. Random forest / MLP (sklearn-only, no new install) remain an
-  open, untried option.
+  a per-station seasonal-decomposition alternative, `MLPRegressor` (sklearn,
+  notebook 11) as a first neural-net pass — see "Model selection rationale"
+  below for why these and not linear regression/a single tree/SVM. Random
+  forest (sklearn-only, no new install) remains an open, untried option;
+  a sequence-aware architecture (LSTM/temporal model, or embeddings for
+  `station_id`) remains open too if the tree ensembles' ceiling ever needs
+  breaking through.
 - `matplotlib` / `plotly` for visualization
 - Possibly a web dashboard later (framework still open)
 
@@ -43,8 +46,8 @@ underlying data patterns referenced here:
   `station_id` and imputing every lag/rolling-feature null near each
   station's start of coverage) — a poor fit for both scale and feature
   shape here.
-- **Random forest / MLP**: not ruled out, just not tried yet — a plausible
-  cheap sklearn-only alternative (no new dependency) if revisited later.
+- **Random forest**: not ruled out, just not tried yet — a plausible cheap
+  sklearn-only alternative (no new dependency) if revisited later.
 - **HistGradientBoostingRegressor / LightGBM** (both tried): native
   missing-value support (lag/rolling features are null near each
   station's start of coverage) and native categorical support
@@ -64,6 +67,25 @@ underlying data patterns referenced here:
   cause: Prophet never sees the current `total_count` reading as an
   input (it's a pure trend/seasonality extrapolator), while both the
   baseline and GBM directly exploit it as their single strongest signal.
+- **MLPRegressor** (tried, notebook 11): a first neural-net pass, per
+  user request — sklearn's `MLPRegressor` on the identical feature set,
+  with an explicit preprocessing pipeline (median imputation +
+  standardization for numeric features, one-hot encoding for
+  categoricals) since, unlike the tree models, it has no native
+  missing-value or categorical support. Result: MAE 28.57 essentially
+  tied with GBM (28.57) and LightGBM (28.56), RMSE 55.57 slightly worse
+  than both (~54.5) — bigger occasional misses despite a comparable
+  typical-case error. Does not fix either flagged station cleanly: worse
+  than both trees on the mild regression (`300037405`, -16.5% vs.
+  baseline vs. their ~-8%), modestly better than both trees but still far
+  from the baseline on the severe regime-shift station (`300038855`,
+  +4-7% over the trees, still -102% vs. baseline). Confirms the same
+  conclusion as the tree-vs-Prophet comparison: this data's structure is
+  already well captured by tree splits, so a first-pass neural net adds
+  preprocessing/tuning overhead without a performance gain. A genuinely
+  different architecture (sequence model over raw 15-min data, or learned
+  `station_id` embeddings) remains untried and is the more plausible
+  place a neural net could still add value.
 
 ## Data sources
 - **Bike counts**: GitHub repo `od-ms/radverkehr-zaehlstellen` — 15-minute
