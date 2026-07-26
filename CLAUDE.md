@@ -13,12 +13,14 @@ regression experiments. Goal here is an actual, active forecasting tool.
 - ML: `HistGradientBoostingRegressor` (sklearn, notebook 08) and `LightGBM`
   (notebook 09) as the tree-ensemble candidates, `Prophet` (notebook 10) as
   a per-station seasonal-decomposition alternative, `MLPRegressor` (sklearn,
-  notebook 11) as a first neural-net pass — see "Model selection rationale"
-  below for why these and not linear regression/a single tree/SVM. Random
-  forest (sklearn-only, no new install) remains an open, untried option;
-  a sequence-aware architecture (LSTM/temporal model, or embeddings for
-  `station_id`) remains open too if the tree ensembles' ceiling ever needs
-  breaking through.
+  notebook 11) as a first neural-net pass, `RandomForestRegressor` (sklearn,
+  notebook 14) as a fourth tree-based class and currently the best model
+  tried — see "Model selection rationale" below for why these were tried
+  and not linear regression/a single tree/SVM, and for the random-forest
+  result. A sequence-aware architecture (LSTM/GRU + a learned `station_id`
+  embedding) was researched but deferred rather than built — see "Model
+  selection rationale" for why — and remains the option if the tree
+  ensembles' ceiling ever needs breaking through.
 - `matplotlib` / `plotly` for visualization
 - Possibly a web dashboard later (framework still open)
 
@@ -46,8 +48,6 @@ underlying data patterns referenced here:
   `station_id` and imputing every lag/rolling-feature null near each
   station's start of coverage) — a poor fit for both scale and feature
   shape here.
-- **Random forest**: not ruled out, just not tried yet — a plausible cheap
-  sklearn-only alternative (no new dependency) if revisited later.
 - **HistGradientBoostingRegressor / LightGBM** (both tried): native
   missing-value support (lag/rolling features are null near each
   station's start of coverage) and native categorical support
@@ -82,10 +82,52 @@ underlying data patterns referenced here:
   +4-7% over the trees, still -102% vs. baseline). Confirms the same
   conclusion as the tree-vs-Prophet comparison: this data's structure is
   already well captured by tree splits, so a first-pass neural net adds
-  preprocessing/tuning overhead without a performance gain. A genuinely
-  different architecture (sequence model over raw 15-min data, or learned
-  `station_id` embeddings) remains untried and is the more plausible
-  place a neural net could still add value.
+  preprocessing/tuning overhead without a performance gain.
+- **Random forest** (tried, notebook 14): a fourth tree-based class,
+  `sklearn.ensemble.RandomForestRegressor` on the identical feature set
+  and chronological holdout as 08/09/11 — the last open item from this
+  list. Like the MLP it has no native missing-value/categorical support
+  (same median-imputation + one-hot preprocessing), but no scaling, since
+  tree splits are scale-invariant. Needed an empirical detour: an initial
+  full-bootstrap configuration (`n_estimators=60`, `max_depth=16`, no row
+  subsampling) missed a 9-minute cell timeout — full-size, un-binned
+  trees on ~2.16M rows are memory-bandwidth-bound in a way the
+  histogram-binned GBM/LightGBM aren't, so parallel speedup across cores
+  fell short of expectations. `max_samples=0.15` bootstrap subsampling
+  cut the actual fit to 91.4s. **Result: the best model tried so far** —
+  MAE 27.34/RMSE 54.13 overall, vs. 28.57/54.53 (GBM), 28.56/54.44
+  (LightGBM), 28.57/55.57 (MLP) — a real ~4.3% MAE improvement, not a
+  near-tie like the other three are with each other. Per-station, it
+  improves on the baseline for 22 of 23 stations (the most consistent of
+  any model tried), including a large apparent win on `300038855` — but
+  notebook 12 (run in parallel) subsequently found that station's test
+  window is ~90% sensor-gap-or-all-zero artifact, not real traffic, so
+  that specific win is likely a near-zero prediction scoring well against
+  a corrupted near-zero target rather than genuine regime-shift
+  robustness; treat it with the same caution as the smaller, less
+  artifact-prone win on the other flagged station (`300037405`, +14.8%
+  vs. baseline).
+- **Sequence-aware architecture (LSTM/GRU + `station_id` embedding)**:
+  researched, not built — deferred rather than left simply unconsidered.
+  Three structurally different model classes tried so far (GBM,
+  LightGBM, MLP) converge to within ~0.05 MAE of each other (28.56-
+  28.57), and GBM's permutation importance (notebook 08) drops off
+  sharply after the top handful of features (`total_count`, `day_of_week`,
+  `hour`, `station_id`, `lag_1w`, `rolling_mean_2h`, roughly a 3.7x cliff
+  down to the next feature, `lag_1d`) — together read as the current
+  lag/rolling feature set approaching a noise floor rather than being
+  under-exploited by any one model class. (Prophet's much worse score,
+  54.30 MAE, doesn't fit this convergence story — see above, it's
+  explained separately by never seeing `total_count` as an input.)
+  Reshaping ~2.3M flat rows into per-station sequences — handling real
+  per-station gaps and differing coverage-start dates — was judged a
+  bigger lift than notebooks 08-14 combined, so it was deprioritized
+  rather than attempted. Random forest's subsequent ~4.3% MAE gain
+  (notebook 14) shows some headroom still exists within the current
+  feature set via a different bias-variance tradeoff, which doesn't
+  overturn the deferral but is worth noting against the "noise floor"
+  framing. If ever revisited: PyTorch over Keras/TensorFlow, a GRU/LSTM
+  with a learned `station_id` embedding.
 
 ## Data sources
 - **Bike counts**: GitHub repo `od-ms/radverkehr-zaehlstellen` — 15-minute
@@ -145,16 +187,25 @@ Before treating a step as done, check it from three angles:
   follow-up feature-engineering pass for a future modeling notebook — not
   implemented here to keep 09/10's model-class comparison against 08
   apples-to-apples (same feature set, different model only).
-- Check whether distance-from-city-center is a useful model feature.
-  Notebook 07's geo-map section found a moderate correlation (r ≈ -0.51)
-  between a station's distance from the Prinzipalmarkt/Dom center and its
-  mean traffic (busier stations cluster on the central Altstadt ring;
-  quieter ones sit 2-4km out) — but with notable exceptions (*Wolbecker
-  Straße*, *Lütkenbecker Str.*), so it's not a clean cutoff. Not yet tried
-  as an actual model feature in 08/09/10; worth testing given it's cheap
-  to compute from `station_locations.csv` and may explain some of what
-  `station_id` alone currently has to capture as an opaque per-station
-  effect. Not yet started.
+- Distance-from-city-center feature: done (2026-07-26,
+  `notebooks/13_distance_feature_test.ipynb`). Notebook 07's geo-map
+  section had found a moderate correlation (r ≈ -0.51) between a
+  station's distance from the Prinzipalmarkt/Dom center and its mean
+  traffic (busier stations cluster on the central Altstadt ring; quieter
+  ones sit 2-4km out) — but with notable exceptions (*Wolbecker
+  Straße*, *Lütkenbecker Str.*), so it wasn't a clean cutoff going in.
+  Tested by adding `distance_from_center_km` (haversine distance to the
+  same reference point) to notebook 08's exact feature set and
+  retraining an otherwise-identical `HistGradientBoostingRegressor` on
+  the identical split. **Result: exactly zero effect** — overall and
+  per-station MAE/RMSE (including both flagged stations) identical to
+  six decimal places with vs. without the feature, `control_prediction
+  == plus_distance_prediction` for every test row, and the feature's
+  permutation importance is 0.0. Cause: `distance_from_center_km` is a
+  deterministic, many-to-one function of `station_id`, which
+  `HistGradientBoostingRegressor`'s categorical splits already exploit
+  fully — an explicit distance feature adds nothing the model can't
+  already extract from `station_id` alone.
 
 ## What Claude should avoid
 - Do not add speculative features beyond what is asked.
