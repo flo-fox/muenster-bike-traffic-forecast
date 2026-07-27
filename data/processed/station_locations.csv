@@ -1,0 +1,24 @@
+station_id,name,lat,lon,geocode_query,resolved
+100020113,Wolbecker Straße,51.9524583,7.6641115,"Wolbecker Straße, Münster, Germany",True
+100031297,Promenade (nördl. Salzstraße),51.9599514,7.6338353,"Salzstraße, Münster, Germany",True
+100031300,Hafenstraße,51.9536509,7.632844,"Hafenstraße, Münster, Germany",True
+100034978,Gartenstraße,51.9684142,7.6410684,"Gartenstraße, Münster, Germany",True
+100034980,Hammer Straße,51.9543399,7.6260783,"Hammer Straße, Münster, Germany",True
+100034981,Weseler Straße,51.9495022,7.616697,"Weseler Straße, Münster, Germany",True
+100034982,Hüfferstraße,51.9601558,7.6039569,"Hüfferstraße, Münster, Germany",True
+100034983,Warendorfer Straße,51.9655912,7.6525956,"Warendorfer Straße, Münster, Germany",True
+100035541,Neutor,51.9695827,7.6078847,"Neutor, Münster, Germany",True
+100053305,"Kanalpromenade, Abschnitt 5",51.9594524,7.6624286,"Kanalpromenade, Münster, Germany",True
+300037405,Promenade (westl. Hals),51.9570572,7.6246847,"Hals, Münster, Germany",True
+300037544,"Kanalpromenade, Abschnitt 1 (Dingstiege)",51.9806831,7.6764657,"Dingstiege, Münster, Germany",True
+300037920,Lütkenbecker Str.,51.9470192,7.6573554,"Lütkenbeck, Münster, Germany",True
+300037925,Goldstraße,51.9709415,7.6406737,"Goldstraße, Münster, Germany",True
+300037926,Bohlweg,51.9664617,7.6382304,"Bohlweg, Münster, Germany",True
+300037928,Kinderhauser Str.,51.9777362,7.6156021,"Kinderhauser Str., Münster, Germany",True
+300037931,Gasselstiege,51.9718357,7.6106978,"Gasselstiege, Münster, Germany",True
+300037932,Schmeddingstraße,51.9580235,7.5906599,"Schmeddingstraße, Münster, Germany",True
+300037933,Weißenburg Str.,51.9432005,7.620432,"Weißenburg Str., Münster, Germany",True
+300037936,"Kanalpromenade, Abschnitt 6",51.9594524,7.6624286,"Kanalpromenade, Münster, Germany",True
+300038855,Bismarckallee,51.9557872,7.6170896,"Bismarckallee, Münster, Germany",True
+300039328,Coesfelder Kreuz,51.9645973,7.599428,"Coesfelder Kreuz, Münster, Germany",True
+300039331,Grevener Straße,51.9801039,7.6115038,"Grevener Straße, Münster, Germany",True

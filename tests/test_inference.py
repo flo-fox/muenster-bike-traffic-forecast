@@ -23,6 +23,7 @@ from muenster_bike_forecast.inference import (
     latest_feature_row,
     months_needed,
     predict_24h_ahead,
+    predict_forecast_curve,
 )
 
 STATION_ID = 12345
@@ -226,6 +227,66 @@ def test_predict_24h_ahead_raises_on_missing_columns() -> None:
     row = pd.Series({"total_count": 1.0})
     with pytest.raises(InferenceError):
         predict_24h_ahead(_StubModel(0.0), row)
+
+
+# ---------------------------------------------------------------------------
+# predict_forecast_curve
+# ---------------------------------------------------------------------------
+
+
+class _SequentialStubModel:
+    """Returns 0, 1, 2, ... for however many rows it's asked to predict."""
+
+    def predict(self, X: pd.DataFrame) -> np.ndarray:
+        return np.arange(len(X), dtype=float)
+
+
+def _hourly_history(n: int = 30) -> pd.DataFrame:
+    datetimes = pd.date_range("2024-06-01 00:00", periods=n, freq="h")
+    history = pd.DataFrame({col: [1.0] * n for col in FEATURE_COLS})
+    history["station_id"] = STATION_ID
+    history["datetime"] = datetimes
+    history["total_count"] = 1.0
+    return history
+
+
+def test_predict_forecast_curve_covers_exactly_the_horizon_window() -> None:
+    history = _hourly_history(n=30)
+    current_datetime = history["datetime"].iloc[-1]
+    horizon = pd.Timedelta(hours=24)
+
+    curve = predict_forecast_curve(
+        _SequentialStubModel(), history, STATION_ID, current_datetime, horizon=horizon
+    )
+
+    assert len(curve) == 24
+    assert list(curve["target_datetime"]) == sorted(curve["target_datetime"])
+    assert curve["target_datetime"].min() > current_datetime
+    assert curve["target_datetime"].max() == current_datetime + horizon
+    # Predictions come back in the same (ascending) order as their source rows.
+    assert list(curve["predicted_total_count"]) == list(range(24))
+
+
+def test_predict_forecast_curve_raises_when_window_is_empty() -> None:
+    history = _hourly_history(n=30)
+    far_future = history["datetime"].iloc[-1] + pd.Timedelta(days=100)
+
+    with pytest.raises(InferenceError):
+        predict_forecast_curve(_SequentialStubModel(), history, STATION_ID, far_future)
+
+
+def test_predict_forecast_curve_raises_on_missing_columns() -> None:
+    history = pd.DataFrame(
+        {
+            "station_id": [STATION_ID],
+            "datetime": pd.to_datetime(["2024-06-01 00:00"]),
+            "total_count": [1.0],
+        }
+    )
+    with pytest.raises(InferenceError):
+        predict_forecast_curve(
+            _SequentialStubModel(), history, STATION_ID, history["datetime"].iloc[-1]
+        )
 
 
 # ---------------------------------------------------------------------------

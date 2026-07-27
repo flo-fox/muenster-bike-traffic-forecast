@@ -59,11 +59,16 @@ NUMERIC_FEATURES: Final[list[str]] = [
 ]
 FEATURE_COLS: Final[list[str]] = NUMERIC_FEATURES + CATEGORICAL_FEATURES
 
-# The longest lookback any single feature needs (lag_1w), plus a few days of
-# slack so a short data gap right at the 7-day mark doesn't leave lag_1w
-# null. Callers fetching live bike-count history should cover at least this
-# much time before `as_of`.
-MIN_HISTORY_LOOKBACK: Final[pd.Timedelta] = pd.Timedelta(days=10)
+# Deliberately more than one calendar month (31 days max) so that
+# `months_needed(as_of, MIN_HISTORY_LOOKBACK)` always spans at least two
+# distinct calendar months regardless of `as_of`'s day-of-month. A tighter
+# bound (e.g. 10 days) can fetch only the current month if `as_of` is late
+# in it, which silently shortens the available history whenever the source
+# itself has stalled (its real latest data can then be *earlier* in that
+# same month, leaving too little trailing history for lag_1w or a 7-day
+# chart window). Callers fetching live bike-count history should cover at
+# least this much time before `as_of`.
+MIN_HISTORY_LOOKBACK: Final[pd.Timedelta] = pd.Timedelta(days=35)
 
 # As-of joining bike-count rows to hourly weather: a row further than this
 # past the nearest weather reading is left with null weather columns rather
@@ -216,6 +221,77 @@ def latest_feature_row(feature_history_df: pd.DataFrame, station_id: int) -> pd.
             "cannot build a current feature row to forecast from."
         )
     return evaluable.sort_values("datetime").iloc[-1]
+
+
+def predict_forecast_curve(
+    model: object,
+    feature_history_df: pd.DataFrame,
+    station_id: int,
+    current_datetime: pd.Timestamp,
+    horizon: pd.Timedelta = pd.Timedelta(hours=24),
+) -> pd.DataFrame:
+    """Predicts a continuous forecast curve for the next `horizon`.
+
+    The production model always maps one row's own (current) features to
+    `total_count` exactly `horizon` after that row's own timestamp. Running
+    it on every available row in the `horizon` window *before*
+    `current_datetime` therefore yields one real, independently-valid
+    24h-ahead prediction per point spanning
+    ``(current_datetime, current_datetime + horizon]`` — a genuine
+    continuous forecast curve for "the next 24 hours from now", built
+    entirely from single valid hops on real historical data rather than
+    chaining the model's own predictions back into itself (which was not
+    how it was trained or validated).
+
+    Args:
+        model: A fitted scikit-learn `Pipeline` (or any object exposing
+            `.predict`).
+        feature_history_df: As returned by `assemble_feature_history`.
+        station_id: Station to select (matched after casting to `int64`).
+        current_datetime: The "now" timestamp the curve is anchored to —
+            typically the timestamp of `latest_feature_row`'s row.
+        horizon: How far ahead each row's own target lies (must match what
+            the model was trained to predict; 24h for the production
+            model).
+
+    Returns:
+        DataFrame with columns ``source_datetime`` (each row's own
+        timestamp), ``target_datetime`` (``source_datetime + horizon``),
+        and ``predicted_total_count``, sorted by ``target_datetime``.
+
+    Raises:
+        InferenceError: if there is no row with a non-null `total_count`
+            for `station_id` in ``(current_datetime - horizon,
+            current_datetime]``, or `feature_history_df` is missing any of
+            `FEATURE_COLS`.
+    """
+    missing = [col for col in FEATURE_COLS if col not in feature_history_df.columns]
+    if missing:
+        raise InferenceError(f"feature_history_df is missing column(s): {missing}.")
+
+    station_rows = feature_history_df.loc[
+        feature_history_df["station_id"] == int(station_id)
+    ]
+    window = station_rows.loc[
+        (station_rows["datetime"] > current_datetime - horizon)
+        & (station_rows["datetime"] <= current_datetime)
+    ]
+    evaluable = window.dropna(subset=["total_count"]).sort_values("datetime")
+    if evaluable.empty:
+        raise InferenceError(
+            f"No row with a non-null total_count for station {station_id!r} in "
+            f"the {horizon} before {current_datetime}; cannot build a forecast curve."
+        )
+
+    predictions = model.predict(evaluable[FEATURE_COLS])
+    curve = pd.DataFrame(
+        {
+            "source_datetime": evaluable["datetime"].to_numpy(),
+            "target_datetime": (evaluable["datetime"] + horizon).to_numpy(),
+            "predicted_total_count": predictions,
+        }
+    )
+    return curve.sort_values("target_datetime").reset_index(drop=True)
 
 
 def predict_24h_ahead(model: object, feature_row: pd.Series) -> float:
