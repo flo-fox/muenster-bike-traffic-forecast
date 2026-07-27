@@ -55,10 +55,27 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
+## Running the dashboard
+
+```bash
+streamlit run app.py
+```
+
+Fetches live bike-count (od-ms/radverkehr-zaehlstellen) and weather (DWD
+Open Data) data at request time and runs the committed production model
+(`models/production_random_forest.joblib`) to forecast traffic 24h ahead
+for the selected station. No API keys or credentials needed. Deployed on
+[Streamlit Community Cloud](https://streamlit.io/cloud) from this public
+repo.
+
 ## Layout
 
 - `notebooks/` — numbered analysis/modeling notebooks
 - `src/muenster_bike_forecast/` — reusable data loading, feature engineering,
-  and modeling code
+  modeling, and live-inference code
+- `app.py` — Streamlit dashboard entry point
+- `models/` — mostly gitignored (regenerate from notebooks), except
+  `production_random_forest.joblib` and `weekend_weekday_ratio.csv`, which
+  are committed since the deployed dashboard needs them directly
 - `data/raw/` — raw downloaded data (gitignored, regenerate from notebooks)
 - `tests/` — unit tests

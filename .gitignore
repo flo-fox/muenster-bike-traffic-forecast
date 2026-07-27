@@ -33,5 +33,9 @@ Thumbs.db
 data/raw/*
 !data/raw/.gitkeep
 
-# Trained models (regenerate from notebooks)
-models/
+# Trained models (regenerate from notebooks), except the production model
+# and its companion feature artifact, which the Streamlit dashboard needs
+# at deploy time and are committed directly (see notebook 17 / README).
+models/*
+!models/production_random_forest.joblib
+!models/weekend_weekday_ratio.csv
