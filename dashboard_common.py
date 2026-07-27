@@ -15,7 +15,6 @@ from pathlib import Path
 
 import joblib
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
@@ -255,39 +254,79 @@ def render_forecast_chart(
     return fig
 
 
+MARKER_SIZE_RANGE = (14, 34)
+MARKER_HALO_PADDING = 8
+
+
 def render_station_map(snapshot: pd.DataFrame, locations: pd.DataFrame) -> go.Figure:
     """Plots every station on OpenStreetMap, sized/colored by its live forecast.
 
-    Same map style/center/zoom/colorscale as
-    `notebooks/07_descriptive_analysis.ipynb`'s station map, swapping that
-    notebook's static all-time mean for this dashboard's live 24h-ahead
-    forecast.
+    `go.Scattermap` markers have no `line`/border property (unlike a plain
+    `go.Scatter` marker), and OpenStreetMap tiles have no single fixed
+    background color to contrast against (parks are green, roads pale
+    yellow/white, water blue, buildings tan) — a sequential colorscale's
+    light end can disappear into whichever tile color happens to match. The
+    fix used everywhere on the web for point-on-map markers: a solid, dark
+    "halo" trace drawn underneath the real (colored) markers, slightly
+    larger, so every marker keeps contrast regardless of both its own color
+    and the tile color beneath it.
+
+    Marker sizes are computed manually (not via `px.scatter_map`'s
+    automatic bubble sizing) so the halo can be sized in lockstep with the
+    data markers it sits behind.
     """
     merged = snapshot.merge(locations[["station_id", "lat", "lon"]], on="station_id")
     merged["label"] = merged["name"] + " (" + merged["station_id"] + ")"
 
-    fig = px.scatter_map(
-        merged,
-        lat="lat",
-        lon="lon",
-        size="forecast_value",
-        color="forecast_value",
-        color_continuous_scale="YlOrRd",
-        hover_name="label",
-        hover_data={
-            "lat": False,
-            "lon": False,
-            "current_total_count": ":.0f",
-            "forecast_value": ":.0f",
-        },
-        zoom=MAP_ZOOM,
-        center=MAP_CENTER,
-        height=550,
-        map_style="open-street-map",
+    value = merged["forecast_value"]
+    value_range = value.max() - value.min()
+    size_min, size_max = MARKER_SIZE_RANGE
+    if value_range > 0:
+        merged["marker_size"] = size_min + (size_max - size_min) * (value - value.min()) / value_range
+    else:
+        merged["marker_size"] = (size_min + size_max) / 2
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scattermap(
+            lat=merged["lat"],
+            lon=merged["lon"],
+            mode="markers",
+            marker=dict(
+                size=merged["marker_size"] + MARKER_HALO_PADDING,
+                color="#26264d",
+                opacity=0.9,
+            ),
+            hoverinfo="skip",
+            showlegend=False,
+        )
     )
-    fig.update_traces(marker={"opacity": 0.9})
+    fig.add_trace(
+        go.Scattermap(
+            lat=merged["lat"],
+            lon=merged["lon"],
+            mode="markers",
+            marker=dict(
+                size=merged["marker_size"],
+                color=merged["forecast_value"],
+                colorscale="YlOrRd",
+                cmin=value.min(),
+                cmax=value.max(),
+                colorbar=dict(title="24h forecast"),
+                opacity=1.0,
+            ),
+            text=merged["label"],
+            customdata=merged[["current_total_count", "forecast_value"]],
+            hovertemplate=(
+                "%{text}<br>Current: %{customdata[0]:.0f}<br>"
+                "Forecast +24h: %{customdata[1]:.0f}<extra></extra>"
+            ),
+            showlegend=False,
+        )
+    )
     fig.update_layout(
-        coloraxis_colorbar_title="24h forecast",
+        map=dict(style="open-street-map", center=MAP_CENTER, zoom=MAP_ZOOM),
+        height=550,
         margin={"l": 0, "r": 0, "t": 10, "b": 40},
     )
     fig.add_annotation(

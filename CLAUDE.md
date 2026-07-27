@@ -206,6 +206,37 @@ Before treating a step as done, check it from three angles:
   `HistGradientBoostingRegressor`'s categorical splits already exploit
   fully — an explicit distance feature adds nothing the model can't
   already extract from `station_id` alone.
+- Streamlit dashboard scaffolded and iterated on (2026-07-27): a multipage
+  app (`app.py` as a thin `st.navigation` entry point, shared logic in
+  `dashboard_common.py`, pages under `pages/`) with three views — **Station
+  forecast** (live 24h-ahead forecast for one station, 7-day observed +
+  rolling-24h-average + continuous next-24h forecast curve, via
+  `src/muenster_bike_forecast/inference.py`), **Station comparison**
+  (cross-sectional bar chart + table across all 23 stations), and **City
+  map** (live OpenStreetMap view, colored by forecast; markers get a solid
+  dark "halo" trace underneath since `go.Scattermap` markers have no
+  border property and a sequential colorscale's light end otherwise
+  disappears into the tile colors). Also found and fixed: the live-fetch
+  lookback window was too tight (10 days) to reliably span two calendar
+  months, silently shortening available history when `as_of` fell late in
+  a month — widened to 35 days. Along the way, confirmed the upstream bike-
+  count source (`od-ms/radverkehr-zaehlstellen`) normally publishes daily
+  (verified via its own commit history) but has an active ~3-week gap as of
+  this session — the dashboard surfaces this as a visible staleness
+  warning rather than silently presenting stale data as current.
+- **Open question for next session**: given the source only updates about
+  daily (per above), does a 15-minute-resolution forecast curve overstate
+  the freshness/precision actually available? Discussed 2026-07-27:
+  leaning towards keeping the *model* at 15-minute resolution (that's the
+  target's real grain, and what the continuous-curve feature depends on)
+  but adding a **daily-aggregated headline number** (e.g. total predicted
+  traffic for the next calendar day, maybe a peak-hour callout) as the
+  primary display, since that better matches how often the underlying data
+  actually changes — a pure aggregation of predictions already computed,
+  no retraining needed. Tradeoff not yet resolved: a daily aggregate is
+  more honest about freshness but loses the intraday shape (e.g. "busier
+  morning rush than usual") the current curve shows. Not implemented yet —
+  pick up here.
 
 ## What Claude should avoid
 - Do not add speculative features beyond what is asked.
