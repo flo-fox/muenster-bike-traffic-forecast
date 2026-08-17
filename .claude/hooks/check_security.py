@@ -8,11 +8,10 @@ to catch the common case, not guarantee absence:
   (`api_key = "..."`), quoted dict/JSON keys (`{"api-key": "..."}`),
   and `os.environ.get("API_KEY", "...")`/`os.getenv(...)`-style
   hardcoded fallbacks - excluding obvious placeholders.
-- Literal `eval(`/`exec(`/`pickle.load(`/`pickle.loads(` calls, which
-  CLAUDE.md singles out as unsafe on the fetched CSV/HTTP content this
-  project treats as untrusted input. This only matches those exact
-  spellings - `import pickle as pkl; pkl.loads(...)` or
-  `getattr(pickle, "loads")(...)` will not be caught.
+- Literal eval/exec/pickle.load/pickle.loads calls, which CLAUDE.md
+  singles out as unsafe on the fetched CSV/HTTP content this project
+  treats as untrusted input. This only matches those exact spellings -
+  an aliased import or an indirect call via getattr will not be caught.
 """
 
 import json
