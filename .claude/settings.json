@@ -1,0 +1,23 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .claude/hooks/check_conventions.py",
+            "timeout": 15,
+            "statusMessage": "Checking CLAUDE.md conventions..."
+          },
+          {
+            "type": "command",
+            "command": "python .claude/hooks/run_tests.py",
+            "timeout": 60,
+            "statusMessage": "Running test suite..."
+          }
+        ]
+      }
+    ]
+  }
+}

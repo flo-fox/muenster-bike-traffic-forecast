@@ -29,6 +29,10 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Claude Code — personal settings and stray agent-worktree artifacts
+.claude/settings.local.json
+.claude/worktrees/
+
 # Data files (raw downloads — regenerate from notebooks)
 data/raw/*
 !data/raw/.gitkeep
