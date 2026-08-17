@@ -318,6 +318,38 @@ def test_chronological_split_uses_a_single_global_cutoff_across_stations() -> No
     assert (train["station_id"] == "B").sum() == 5
 
 
+def test_chronological_split_embargoes_rows_whose_target_reaches_into_test() -> None:
+    # Hourly data; default embargo (24h, matching add_forecast_target's
+    # default horizon) must exclude rows in [cutoff - 24h, cutoff) from
+    # train, since add_forecast_target would label them from inside test.
+    dates = pd.date_range("2024-01-01", periods=24 * 5, freq="h")
+    df = pd.DataFrame({"station_id": "A", "datetime": dates})
+
+    train, test, cutoff = chronological_split(df, test_period=pd.Timedelta(days=2))
+
+    assert (train["datetime"] < cutoff - pd.Timedelta(hours=24)).all()
+    assert (test["datetime"] >= cutoff).all()
+    embargoed = df[
+        (df["datetime"] >= cutoff - pd.Timedelta(hours=24)) & (df["datetime"] < cutoff)
+    ]
+    assert len(embargoed) > 0
+    assert not embargoed["datetime"].isin(train["datetime"]).any()
+    assert not embargoed["datetime"].isin(test["datetime"]).any()
+
+
+def test_chronological_split_embargo_zero_reproduces_pre_embargo_behavior() -> None:
+    dates = pd.date_range("2024-01-01", periods=10, freq="D")
+    df = pd.DataFrame({"station_id": "A", "datetime": dates})
+
+    train, test, cutoff = chronological_split(
+        df, test_period=pd.Timedelta(days=3), embargo=pd.Timedelta(0)
+    )
+
+    assert len(train) + len(test) == len(df)
+    assert (train["datetime"] < cutoff).all()
+    assert (test["datetime"] >= cutoff).all()
+
+
 def test_chronological_split_raises_on_empty_dataframe() -> None:
     with pytest.raises(ModelTableError):
         chronological_split(pd.DataFrame({"datetime": pd.to_datetime([])}))

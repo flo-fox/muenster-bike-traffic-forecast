@@ -365,14 +365,35 @@ def test_save_station_data_sanitizes_formula_like_headers(tmp_path: Path) -> Non
 
 
 class _FakeResponse:
-    """Minimal stand-in for `requests.Response` used to mock HTTP calls."""
+    """Minimal stand-in for `requests.Response` used to mock HTTP calls.
+
+    Supports the streaming/context-manager interface `fetch_station_month`
+    uses (`headers`, `iter_content`, `close`, `__enter__`/`__exit__`) in
+    addition to the plain attributes `list_stations` uses (`text`, `json`).
+    """
 
     def __init__(
-        self, status_code: int = 200, text: str = "", json_data: object = None
+        self,
+        status_code: int = 200,
+        text: str = "",
+        json_data: object = None,
+        headers: dict[str, str] | None = None,
+        encoding: str | None = "utf-8",
     ) -> None:
         self.status_code = status_code
         self.text = text
+        self.encoding = encoding
         self._json_data = json_data
+        self.headers = headers if headers is not None else {}
+
+    @property
+    def apparent_encoding(self) -> str:
+        # Real `requests.Response.apparent_encoding` inspects `.content`,
+        # which raises once the body has been drained via `iter_content`
+        # (as `_read_capped` does) without ever populating `._content` -
+        # mirrored here so a regression that reads this after streaming
+        # would fail the test, not silently pass against a friendlier fake.
+        raise RuntimeError("The content for this response was already consumed")
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
@@ -380,6 +401,24 @@ class _FakeResponse:
 
     def json(self) -> object:
         return self._json_data
+
+    def iter_content(self, chunk_size: int = 1024):
+        # Always encodes as utf-8 on the wire regardless of `self.encoding`
+        # (which only controls what the code under test is told the
+        # charset is, mirroring a real response where the bytes on the
+        # wire and the declared/detected charset are independent).
+        data = self.text.encode("utf-8")
+        for i in range(0, len(data), chunk_size):
+            yield data[i : i + chunk_size]
+
+    def close(self) -> None:
+        pass
+
+    def __enter__(self) -> "_FakeResponse":
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
 
 
 def test_list_stations_uses_mocked_index(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -435,6 +474,37 @@ def test_fetch_station_month_oversized_response_raises(
     )
     with pytest.raises(BikeCountDataError, match="exceeds"):
         bike_counts.fetch_station_month("300038855", 2025, 1)
+
+
+def test_fetch_station_month_malformed_content_length_does_not_crash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        bike_counts.requests,
+        "get",
+        lambda *a, **k: _FakeResponse(
+            200, text=VALID_CSV, headers={"Content-Length": "not-a-number"}
+        ),
+    )
+    df = bike_counts.fetch_station_month("300038855", 2025, 1)
+    assert df is not None
+    assert len(df) == 4
+
+
+def test_fetch_station_month_falls_back_to_utf8_when_encoding_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No charset in Content-Type -> response.encoding is None. Must fall
+    # back straight to "utf-8" without touching apparent_encoding, which
+    # is unusable once the body has been streamed via iter_content.
+    monkeypatch.setattr(
+        bike_counts.requests,
+        "get",
+        lambda *a, **k: _FakeResponse(200, text=VALID_CSV, encoding=None),
+    )
+    df = bike_counts.fetch_station_month("300038855", 2025, 1)
+    assert df is not None
+    assert len(df) == 4
 
 
 def test_fetch_station_data_combines_months_skips_404s_and_dedupes(

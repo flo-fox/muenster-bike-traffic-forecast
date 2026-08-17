@@ -246,26 +246,39 @@ def _download_zip_bytes(
     """
     http = session if session is not None else requests
     try:
-        response = http.get(url, timeout=timeout)
-        response.raise_for_status()
+        response = http.get(url, timeout=timeout, stream=True)
     except requests.RequestException as exc:
         raise WeatherFetchError(f"Could not download {url!r}: {exc}") from exc
 
-    content_length = (
-        response.headers.get("Content-Length") if hasattr(response, "headers") else None
-    )
-    if content_length is not None and int(content_length) > MAX_DOWNLOAD_BYTES:
-        raise WeatherFetchError(
-            f"Refusing to download {url!r}: declared size {content_length} "
-            f"bytes exceeds the {MAX_DOWNLOAD_BYTES}-byte limit."
-        )
-    if len(response.content) > MAX_DOWNLOAD_BYTES:
-        raise WeatherFetchError(
-            f"Refusing to use response from {url!r}: body of "
-            f"{len(response.content)} bytes exceeds the "
-            f"{MAX_DOWNLOAD_BYTES}-byte limit."
-        )
-    return response.content
+    with response:
+        try:
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            raise WeatherFetchError(f"Could not download {url!r}: {exc}") from exc
+
+        content_length = response.headers.get("Content-Length")
+        if content_length is not None:
+            try:
+                declared_size = int(content_length)
+            except ValueError:
+                declared_size = None
+            if declared_size is not None and declared_size > MAX_DOWNLOAD_BYTES:
+                raise WeatherFetchError(
+                    f"Refusing to download {url!r}: declared size {content_length} "
+                    f"bytes exceeds the {MAX_DOWNLOAD_BYTES}-byte limit."
+                )
+
+        chunks = []
+        total = 0
+        for chunk in response.iter_content(chunk_size=1024 * 1024):
+            total += len(chunk)
+            if total > MAX_DOWNLOAD_BYTES:
+                raise WeatherFetchError(
+                    f"Refusing to use response from {url!r}: body exceeds the "
+                    f"{MAX_DOWNLOAD_BYTES}-byte limit."
+                )
+            chunks.append(chunk)
+        return b"".join(chunks)
 
 
 def _extract_product_text(zip_bytes: bytes, source_url: str) -> str:

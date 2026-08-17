@@ -69,6 +69,29 @@ class BikeCountDataError(Exception):
     """
 
 
+def _read_capped(response: requests.Response, url: str, max_bytes: int) -> bytes:
+    """Reads a streamed response body, aborting once `max_bytes` is exceeded.
+
+    Reading via `iter_content` rather than `response.content`/`.text` means
+    an oversized body is caught mid-download, not just checked afterward
+    once the whole thing is already sitting in memory.
+
+    Raises:
+        BikeCountDataError: if the accumulated body exceeds `max_bytes`.
+    """
+    chunks = []
+    total = 0
+    for chunk in response.iter_content(chunk_size=1024 * 1024):
+        total += len(chunk)
+        if total > max_bytes:
+            raise BikeCountDataError(
+                f"Refusing to use response from {url}: body exceeds the "
+                f"{max_bytes}-byte limit."
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 def _validate_station_id(station_id: str) -> None:
     """Reject station ids that are unsafe to use as a filename component.
 
@@ -397,30 +420,38 @@ def fetch_station_month(
     """
     url = station_csv_url(station_id, year, month)
     try:
-        response = requests.get(url, timeout=timeout)
+        response = requests.get(url, timeout=timeout, stream=True)
     except requests.RequestException as exc:
         raise BikeCountDataError(f"Failed to fetch {url}: {exc}") from exc
-    if response.status_code == 404:
-        return None
-    try:
-        response.raise_for_status()
-    except requests.RequestException as exc:
-        raise BikeCountDataError(f"Failed to fetch {url}: {exc}") from exc
-    content_length = (
-        response.headers.get("Content-Length") if hasattr(response, "headers") else None
+    with response:
+        if response.status_code == 404:
+            return None
+        try:
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            raise BikeCountDataError(f"Failed to fetch {url}: {exc}") from exc
+
+        content_length = response.headers.get("Content-Length")
+        if content_length is not None:
+            try:
+                declared_size = int(content_length)
+            except ValueError:
+                declared_size = None
+            if declared_size is not None and declared_size > MAX_DOWNLOAD_BYTES:
+                raise BikeCountDataError(
+                    f"Refusing to download {url}: declared size {content_length} "
+                    f"bytes exceeds the {MAX_DOWNLOAD_BYTES}-byte limit."
+                )
+
+        body = _read_capped(response, url, MAX_DOWNLOAD_BYTES)
+        # `response.encoding` is set from the Content-Type header at request
+        # time, so it's safe to read here - unlike `.apparent_encoding`,
+        # which lazily inspects `.content` and raises `RuntimeError` once
+        # the body has already been drained via `iter_content` above.
+        encoding = response.encoding or "utf-8"
+    return parse_station_csv(
+        body.decode(encoding, errors="replace"), station_id=station_id
     )
-    if content_length is not None and int(content_length) > MAX_DOWNLOAD_BYTES:
-        raise BikeCountDataError(
-            f"Refusing to download {url}: declared size {content_length} "
-            f"bytes exceeds the {MAX_DOWNLOAD_BYTES}-byte limit."
-        )
-    body_size = len(response.text.encode("utf-8"))
-    if body_size > MAX_DOWNLOAD_BYTES:
-        raise BikeCountDataError(
-            f"Refusing to use response from {url}: body of {body_size} "
-            f"bytes exceeds the {MAX_DOWNLOAD_BYTES}-byte limit."
-        )
-    return parse_station_csv(response.text, station_id=station_id)
 
 
 def fetch_station_data(

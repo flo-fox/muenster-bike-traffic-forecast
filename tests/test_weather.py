@@ -39,10 +39,25 @@ class _FakeResponse:
         self.content = content
         self.text = text
         self.status_code = status_code
+        self.headers: dict[str, str] = {}
+        self.closed = False
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
             raise weather.requests.HTTPError(f"status {self.status_code}")
+
+    def iter_content(self, chunk_size: int = 1024):
+        for i in range(0, len(self.content), chunk_size):
+            yield self.content[i : i + chunk_size]
+
+    def close(self) -> None:
+        self.closed = True
+
+    def __enter__(self) -> "_FakeResponse":
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
 
 
 class _FakeSession:
@@ -51,7 +66,9 @@ class _FakeSession:
     def __init__(self, routes: dict[str, _FakeResponse]):
         self._routes = routes
 
-    def get(self, url: str, timeout: float = 30.0) -> _FakeResponse:
+    def get(
+        self, url: str, timeout: float = 30.0, stream: bool = False
+    ) -> _FakeResponse:
         for suffix, response in self._routes.items():
             if url.endswith(suffix):
                 return response
@@ -318,6 +335,19 @@ def test_fetch_hourly_weather_wraps_http_errors() -> None:
         )
 
 
+def test_download_zip_bytes_closes_response_on_http_error() -> None:
+    # response.close() must run even when raise_for_status() raises -
+    # stream=True keeps the connection open until closed, so skipping
+    # this on the error path would leak it.
+    response = _FakeResponse(status_code=500)
+    session = _FakeSession({"foo.zip": response})
+
+    with pytest.raises(weather.WeatherFetchError):
+        weather._download_zip_bytes("https://example.invalid/foo.zip", session=session)
+
+    assert response.closed is True
+
+
 def test_fetch_hourly_weather_rejects_non_zip_content() -> None:
     session = _FakeSession(
         {"stundenwerte_TU_01766_akt.zip": _FakeResponse(content=b"not a zip file")}
@@ -340,6 +370,18 @@ def test_download_zip_bytes_rejects_declared_oversized_content_length() -> None:
 
     with pytest.raises(weather.WeatherFetchError, match="exceeds"):
         weather._download_zip_bytes("https://example.invalid/foo.zip", session=session)
+
+
+def test_download_zip_bytes_malformed_content_length_does_not_crash() -> None:
+    response = _FakeResponse(content=b"small")
+    response.headers = {"Content-Length": "not-a-number"}
+    session = _FakeSession({"foo.zip": response})
+
+    result = weather._download_zip_bytes(
+        "https://example.invalid/foo.zip", session=session
+    )
+
+    assert result == b"small"
 
 
 def test_download_zip_bytes_rejects_oversized_body(

@@ -27,15 +27,20 @@ from muenster_bike_forecast.data.bike_counts import (
 from muenster_bike_forecast.data.calendar import (
     DEFAULT_PUBLIC_HOLIDAY_SUBDIV,
     SchoolHolidayFetchError,
+    SchoolHolidaySchemaError,
     fetch_school_holidays,
     public_holidays,
 )
 from muenster_bike_forecast.data.join import JoinError, combine_weather_parameters
+from muenster_bike_forecast.data.semester_dates import SemesterDateRangeError
 from muenster_bike_forecast.data.weather import (
     PARAMETER_SPECS,
     WeatherFetchError,
+    WeatherSchemaError,
     fetch_hourly_weather,
 )
+from muenster_bike_forecast.modeling.lag_features import LagFeatureError
+from muenster_bike_forecast.modeling.model_table import ModelTableError
 from muenster_bike_forecast import inference
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -58,11 +63,19 @@ MAP_ZOOM = 11.3
 
 # Every exception a live fetch/feature-assembly/prediction call can raise,
 # for pages to catch in one place and show as a friendly st.error/st.info.
+# Covers the full call graph of build_forecast/build_fleet_snapshot: fetch
+# errors from each live source, schema-validation errors on what they
+# return, the calendar-table lookup range, and feature/model-table assembly.
 FETCH_ERRORS = (
     BikeCountDataError,
     WeatherFetchError,
+    WeatherSchemaError,
     SchoolHolidayFetchError,
+    SchoolHolidaySchemaError,
+    SemesterDateRangeError,
     JoinError,
+    ModelTableError,
+    LagFeatureError,
     inference.InferenceError,
 )
 
@@ -91,7 +104,9 @@ def cached_list_stations() -> list[Station]:
 
 
 @st.cache_data(ttl=900, show_spinner=False)
-def cached_fetch_bike_month(station_id: str, year: int, month: int) -> pd.DataFrame | None:
+def cached_fetch_bike_month(
+    station_id: str, year: int, month: int
+) -> pd.DataFrame | None:
     return fetch_station_month(station_id, year, month)
 
 
@@ -137,7 +152,11 @@ def build_forecast(station: Station, as_of: date) -> dict[str, object]:
     ratio_table = load_ratio_table()
 
     history = inference.assemble_feature_history(
-        raw_bike_df, weather_wide_df, public_holidays_df, school_holidays_df, ratio_table
+        raw_bike_df,
+        weather_wide_df,
+        public_holidays_df,
+        school_holidays_df,
+        ratio_table,
     )
     current_row = inference.latest_feature_row(history, station.station_id)
     model = load_model()
@@ -185,9 +204,10 @@ def render_forecast_chart(
     history: pd.DataFrame, current_row: pd.Series, forecast_curve: pd.DataFrame
 ) -> go.Figure:
     """Builds a recent-history + rolling-average + forecast-curve chart."""
-    window_periods = int(CHART_HISTORY_WINDOW / pd.Timedelta(minutes=15))
-    recent = history.dropna(subset=["total_count"]).tail(window_periods)
-    rolling = history.dropna(subset=["rolling_mean_24h"]).tail(window_periods)
+    window_start = current_row["datetime"] - CHART_HISTORY_WINDOW
+    windowed = history[history["datetime"] >= window_start]
+    recent = windowed.dropna(subset=["total_count"])
+    rolling = windowed.dropna(subset=["rolling_mean_24h"])
 
     fig = go.Figure()
     fig.add_trace(
@@ -282,7 +302,9 @@ def render_station_map(snapshot: pd.DataFrame, locations: pd.DataFrame) -> go.Fi
     value_range = value.max() - value.min()
     size_min, size_max = MARKER_SIZE_RANGE
     if value_range > 0:
-        merged["marker_size"] = size_min + (size_max - size_min) * (value - value.min()) / value_range
+        merged["marker_size"] = (
+            size_min + (size_max - size_min) * (value - value.min()) / value_range
+        )
     else:
         merged["marker_size"] = (size_min + size_max) / 2
 

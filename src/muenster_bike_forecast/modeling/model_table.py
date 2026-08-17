@@ -346,27 +346,43 @@ def chronological_split(
     df: pd.DataFrame,
     timestamp_col: str = "datetime",
     test_period: pd.Timedelta = DEFAULT_TEST_PERIOD,
+    embargo: pd.Timedelta = DEFAULT_HORIZON,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.Timestamp]:
     """Splits rows into train/test by a single global chronological cutoff.
 
     The cutoff is ``max(timestamp_col) - test_period`` computed over the
     *whole* input (all stations together), then applied uniformly: every
-    row before the cutoff is train, every row at/after it is test. This
-    respects time order (no future leaking into the past) and station
-    boundaries (the same cutoff date is used for every station, rather
-    than a per-station cutoff which would let one station's "future" leak
-    relative to another's).
+    row before ``cutoff - embargo`` is train, every row at/after the
+    cutoff is test. This respects time order (no future leaking into the
+    past) and station boundaries (the same cutoff date is used for every
+    station, rather than a per-station cutoff which would let one
+    station's "future" leak relative to another's).
+
+    `embargo` exists because time order alone isn't enough here: a row's
+    *label* (as added by `add_forecast_target`) is observed `horizon`
+    after its own timestamp, not at it. Without an embargo, a train row
+    timestamped just before `cutoff` would carry a label timestamped at
+    or after `cutoff` - i.e. inside the nominal test window - so the
+    model would train on information from the period it's meant to be
+    evaluated against. The `[cutoff - embargo, cutoff)` window is dropped
+    from train entirely (it's in neither split) to close this gap;
+    defaults to `DEFAULT_HORIZON`, matching `add_forecast_target`'s
+    default horizon.
 
     Args:
         df: Rows for one or more stations, with a `timestamp_col` column.
         timestamp_col: Name of the timestamp column.
         test_period: Length of the held-out test window at the end of the
             data.
+        embargo: Width of the excluded window immediately before the
+            cutoff. Pass `pd.Timedelta(0)` to disable it and reproduce
+            the pre-embargo behavior.
 
     Returns:
         ``(train_df, test_df, cutoff)`` where `cutoff` is the timestamp
         used as the train/test boundary (test rows have
-        ``timestamp_col >= cutoff``).
+        ``timestamp_col >= cutoff``; train rows have
+        ``timestamp_col < cutoff - embargo``).
 
     Raises:
         ModelTableError: if `timestamp_col` is missing from `df`, or `df`
@@ -378,7 +394,7 @@ def chronological_split(
         raise ModelTableError("DataFrame is empty; cannot determine a split cutoff.")
 
     cutoff = df[timestamp_col].max() - test_period
-    train = df.loc[df[timestamp_col] < cutoff].copy()
+    train = df.loc[df[timestamp_col] < cutoff - embargo].copy()
     test = df.loc[df[timestamp_col] >= cutoff].copy()
     return train, test, cutoff
 

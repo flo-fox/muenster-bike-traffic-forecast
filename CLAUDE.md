@@ -237,6 +237,25 @@ Before treating a step as done, check it from three angles:
   more honest about freshness but loses the intraday shape (e.g. "busier
   morning rush than usual") the current curve shows. Not implemented yet —
   pick up here.
+- **`chronological_split` gained a default 24h embargo (2026-08-17)**:
+  `modeling/model_table.py`'s `chronological_split` previously put every
+  row strictly before the cutoff into train, but a row's *label* (added
+  by `add_forecast_target`) is observed 24h after its own timestamp — so
+  a train row just before the cutoff carried a label from just after it,
+  inside the nominal test window. Fixed by adding an
+  `embargo: pd.Timedelta = DEFAULT_HORIZON` parameter that now excludes
+  `[cutoff - embargo, cutoff)` from train by default (pass
+  `embargo=pd.Timedelta(0)` to reproduce the old behavior). **Not yet
+  done**: every notebook that calls `chronological_split(` without an
+  explicit `embargo=` (06, 08, 09, 10, 11, 13, 14, 15, 16, 17 — i.e. every
+  metric quoted elsewhere in this file, including the production model's
+  "MAE 27.07 / RMSE 53.70") now trains on marginally fewer rows than when
+  those numbers were produced, and none of these notebooks have been
+  re-run against the new default. Expected impact is small (the dropped
+  window is ~96 rows/station out of ~2.16M train rows), but the committed
+  metrics are technically stale until each notebook gets a fresh
+  Restart & Run All. Re-running all ten was out of scope for the fix
+  itself — pick up here before trusting any of them as current.
 
 ## What Claude should avoid
 - Do not add speculative features beyond what is asked.
