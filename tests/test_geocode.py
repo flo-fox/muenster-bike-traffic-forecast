@@ -12,6 +12,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+import muenster_bike_forecast.data.geocode as geocode_module
 from muenster_bike_forecast.data.geocode import (
     CACHE_COLUMNS,
     GeocodeError,
@@ -236,6 +237,37 @@ def test_geocode_station_flags_no_match_as_unresolved_with_null_coords() -> None
     assert result.lon is None
 
 
+def test_geocode_station_raises_on_non_list_response() -> None:
+    class _BadResponse(_FakeResponse):
+        def json(self) -> dict[str, object]:  # type: ignore[override]
+            return {"error": "not a list"}
+
+    class _BadSession(_FakeSession):
+        def get(self, url, params=None, headers=None, timeout=None):  # noqa: ANN001
+            return _BadResponse({})
+
+    with pytest.raises(GeocodeError):
+        geocode_station("1", "Bad", "Bad, Münster, Germany", _BadSession({}))
+
+
+def test_geocode_station_raises_on_result_missing_lat_lon() -> None:
+    class _BadSession(_FakeSession):
+        def get(self, url, params=None, headers=None, timeout=None):  # noqa: ANN001
+            return _FakeResponse([{"display_name": "no coords here"}])
+
+    with pytest.raises(GeocodeError):
+        geocode_station("1", "Bad", "Bad, Münster, Germany", _BadSession({}))
+
+
+def test_geocode_station_raises_on_non_numeric_lat_lon() -> None:
+    class _BadSession(_FakeSession):
+        def get(self, url, params=None, headers=None, timeout=None):  # noqa: ANN001
+            return _FakeResponse([{"lat": "not-a-number", "lon": "7.6"}])
+
+    with pytest.raises(GeocodeError):
+        geocode_station("1", "Bad", "Bad, Münster, Germany", _BadSession({}))
+
+
 def test_geocode_stations_only_queries_cache_misses(tmp_path: Path) -> None:
     cache_path = tmp_path / "station_locations.csv"
     save_location_cache(pd.DataFrame([_row("1")]), cache_path)
@@ -301,3 +333,45 @@ def test_geocode_stations_raises_on_missing_column(tmp_path: Path) -> None:
     stations = pd.DataFrame({"station_id": ["1"]})  # no "name" column
     with pytest.raises(GeocodeError):
         geocode_stations(stations, tmp_path / "out.csv", session=_FakeSession({}))
+
+
+class _TrackingSession(_FakeSession):
+    """Same as `_FakeSession`, but records whether `.close()` was called."""
+
+    def __init__(self, routes: dict[str, list[dict[str, object]]]):
+        super().__init__(routes)
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_geocode_stations_closes_the_session_it_creates_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cache_path = tmp_path / "station_locations.csv"
+    stations = pd.DataFrame([{"station_id": "1", "name": "Station 1"}])
+    tracking_session = _TrackingSession(
+        {"Station 1, Münster, Germany": _nominatim_hit("51.96", "7.62")}
+    )
+    monkeypatch.setattr(geocode_module.requests, "Session", lambda: tracking_session)
+
+    geocode_stations(stations, cache_path, min_request_interval=0)
+
+    assert tracking_session.closed is True
+
+
+def test_geocode_stations_does_not_close_a_caller_supplied_session(
+    tmp_path: Path,
+) -> None:
+    cache_path = tmp_path / "station_locations.csv"
+    stations = pd.DataFrame([{"station_id": "1", "name": "Station 1"}])
+    tracking_session = _TrackingSession(
+        {"Station 1, Münster, Germany": _nominatim_hit("51.96", "7.62")}
+    )
+
+    geocode_stations(
+        stations, cache_path, session=tracking_session, min_request_interval=0
+    )
+
+    assert tracking_session.closed is False

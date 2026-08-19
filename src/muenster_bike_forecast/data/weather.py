@@ -50,6 +50,8 @@ from typing import Final
 import pandas as pd
 import requests
 
+_STATION_ID_RE: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9_-]+$")
+
 DWD_BASE_URL: Final[str] = (
     "https://opendata.dwd.de/climate_environment/CDC/observations_germany/"
     "climate/hourly"
@@ -74,6 +76,31 @@ class WeatherFetchError(Exception):
 
 class WeatherSchemaError(Exception):
     """Raised when fetched weather data does not match the expected schema."""
+
+
+def _validate_station_id(station_id: str) -> None:
+    """Reject station ids that are unsafe to use as a URL/filename component.
+
+    `station_id` defaults to the module constant `DEFAULT_STATION_ID` but
+    every function accepting it also accepts an arbitrary caller-supplied
+    value, which is later joined into a download URL
+    (`build_recent_zip_url`) and a local output filename
+    (`save_raw_weather`) - same class of risk `data.bike_counts`'s own
+    `_validate_station_id` guards against, duplicated here (rather than
+    imported) since it's a private helper of that module.
+
+    Args:
+        station_id: Station identifier to validate.
+
+    Raises:
+        WeatherFetchError: if `station_id` is empty or contains any
+            character other than an ASCII letter, digit, ``_``, or ``-``.
+    """
+    if not _STATION_ID_RE.match(station_id):
+        raise WeatherFetchError(
+            f"station_id {station_id!r} is not a safe identifier; expected "
+            "only letters, digits, '_', and '-'."
+        )
 
 
 @dataclass(frozen=True)
@@ -160,8 +187,11 @@ def build_recent_zip_url(parameter: str, station_id: str = DEFAULT_STATION_ID) -
 
     Raises:
         ValueError: if `parameter` is not a known parameter key.
+        WeatherFetchError: if `station_id` is not a safe identifier (see
+            `_validate_station_id`).
     """
     spec = _parameter_spec(parameter)
+    _validate_station_id(station_id)
     return (
         f"{DWD_BASE_URL}/{spec.subdir}/recent/"
         f"stundenwerte_{spec.file_code}_{station_id}_akt.zip"
@@ -635,8 +665,11 @@ def save_raw_weather(
 
     Raises:
         ValueError: if `parameter` is not a known parameter key.
+        WeatherFetchError: if `station_id` is not a safe identifier (see
+            `_validate_station_id`).
     """
     _parameter_spec(parameter)  # validates parameter name, raises if unknown
+    _validate_station_id(station_id)
     raw_dir.mkdir(parents=True, exist_ok=True)
     out_path = raw_dir / f"dwd_{parameter}_{station_id}.csv"
     df.to_csv(out_path, index=False)

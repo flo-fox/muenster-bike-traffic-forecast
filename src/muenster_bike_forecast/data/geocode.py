@@ -286,10 +286,18 @@ def geocode_station(
 
     Raises:
         GeocodeError: if the Nominatim request itself fails (network/HTTP/
-            JSON-parsing error) - as opposed to a clean "no match" or
-            out-of-bounds result, which is not an error.
+            JSON-parsing error), or the response does not match the
+            expected shape (not a list, a non-dict entry, or a top entry
+            missing/with non-numeric ``lat``/``lon``) - as opposed to a
+            clean "no match" or out-of-bounds result, which is not an
+            error.
     """
     results = _query_nominatim(query, session, timeout)
+    if not isinstance(results, list):
+        raise GeocodeError(
+            f"Nominatim response for query {query!r} is not a list "
+            f"(got {type(results).__name__})."
+        )
     if not results:
         return GeocodeResult(
             station_id=station_id,
@@ -301,8 +309,17 @@ def geocode_station(
         )
 
     top = results[0]
-    lat = float(top["lat"])
-    lon = float(top["lon"])
+    if not isinstance(top, dict) or "lat" not in top or "lon" not in top:
+        raise GeocodeError(
+            f"Nominatim response for query {query!r} is missing lat/lon: {top!r}."
+        )
+    try:
+        lat = float(top["lat"])
+        lon = float(top["lon"])
+    except (TypeError, ValueError) as exc:
+        raise GeocodeError(
+            f"Nominatim response for query {query!r} has non-numeric lat/lon: {top!r}."
+        ) from exc
     return GeocodeResult(
         station_id=station_id,
         name=name,
@@ -376,6 +393,7 @@ def geocode_stations(
     if to_geocode.empty:
         return existing
 
+    owns_session = session is None
     http = session if session is not None else requests.Session()
     overrides = query_overrides or {}
     new_rows: list[GeocodeResult] = []
@@ -391,6 +409,8 @@ def geocode_stations(
                 )
             )
     finally:
+        if owns_session:
+            http.close()
         if new_rows:
             new_df = pd.DataFrame([r.__dict__ for r in new_rows], columns=CACHE_COLUMNS)
             existing = merge_location_cache(existing, new_df)

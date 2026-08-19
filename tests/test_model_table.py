@@ -223,6 +223,17 @@ def test_add_forecast_target_raises_on_missing_column() -> None:
         add_forecast_target(df)
 
 
+def test_add_forecast_target_returns_valid_empty_result_on_empty_input() -> None:
+    # pd.MultiIndex.from_tuples([]) raises TypeError on an empty key list -
+    # this must not propagate as a bare, uninformative exception.
+    df = pd.DataFrame({"station_id": [], "datetime": [], "total_count": []})
+
+    out = add_forecast_target(df)
+
+    assert out.empty
+    assert "target_total_count" in out.columns
+
+
 def test_summarize_target_nulls_reports_fraction() -> None:
     df = pd.DataFrame({"target_total_count": [1.0, None, 3.0, None]})
 

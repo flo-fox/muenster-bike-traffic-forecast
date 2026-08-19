@@ -208,6 +208,47 @@ def test_parse_station_index_valid() -> None:
     ]
 
 
+def test_parse_station_index_strips_control_characters_from_name() -> None:
+    raw = [
+        {
+            "name": "Bismarck\x00allee\nWest",
+            "directory": "300038855",
+            "start": 2023,
+            "channels": [[1, "Foo"]],
+        }
+    ]
+    stations = parse_station_index(raw)
+    assert stations[0].name == "BismarckalleeWest"
+
+
+def test_parse_station_index_keeps_ordinary_unicode_in_name() -> None:
+    # Real station names include umlauts/spaces/punctuation - only control
+    # characters should be stripped, not ordinary free text.
+    raw = [
+        {
+            "name": "Gartenstraße, Abschnitt 1 (Süd)",
+            "directory": "1",
+            "start": 2023,
+            "channels": [[1, "Foo"]],
+        }
+    ]
+    stations = parse_station_index(raw)
+    assert stations[0].name == "Gartenstraße, Abschnitt 1 (Süd)"
+
+
+def test_parse_station_index_truncates_overlong_name() -> None:
+    raw = [
+        {
+            "name": "X" * 500,
+            "directory": "1",
+            "start": 2023,
+            "channels": [[1, "Foo"]],
+        }
+    ]
+    stations = parse_station_index(raw)
+    assert len(stations[0].name) == 200
+
+
 def test_parse_station_index_not_a_list_raises() -> None:
     with pytest.raises(BikeCountDataError, match="non-empty JSON list"):
         parse_station_index({"not": "a list"})
@@ -334,6 +375,33 @@ def test_summarize_coverage_reports_expected_counts() -> None:
     assert summary["n_missing"] == 1
     assert summary["n_expected"] == 5
     assert summary["missing_timestamps"] == [pd.Timestamp("2025-01-01 00:45")]
+
+
+def test_summarize_coverage_does_not_double_count_an_off_grid_timestamp() -> None:
+    # 00:47 is a quarter-hour off the 15-minute grid (e.g. a malformed
+    # source timestamp). The on-grid slots between 00:00 and 00:47 are
+    # 00:00/00:15/00:30/00:45 (4 total); 00:45 is missing, so n_expected
+    # must be 4, not `n_records (4, since 00:47 counts as its own distinct
+    # present timestamp) + n_missing (1)` = 5, which double-counts the
+    # off-grid row.
+    df = pd.DataFrame(
+        {
+            "datetime": pd.to_datetime(
+                [
+                    "2025-01-01 00:00",
+                    "2025-01-01 00:15",
+                    "2025-01-01 00:30",
+                    "2025-01-01 00:47",
+                ]
+            )
+        }
+    )
+
+    summary = summarize_coverage(df, station_id="300038855")
+
+    assert summary["n_records"] == 4
+    assert summary["n_missing"] == 1
+    assert summary["n_expected"] == 4
 
 
 # ---------------------------------------------------------------------------

@@ -73,6 +73,15 @@ def add_lag_feature(
     if missing:
         raise LagFeatureError(f"DataFrame is missing column(s): {sorted(missing)}.")
 
+    if df.empty:
+        # `pd.MultiIndex.from_tuples([])` below raises `TypeError: Cannot
+        # infer number of levels from empty list` on an empty key list -
+        # short-circuit with the same "valid empty result" behavior
+        # `add_rolling_feature` already gets for free from its groupby.
+        out = df.copy()
+        out[feature_col] = pd.Series(dtype="float64")
+        return out
+
     key_pairs = list(zip(df[station_col], df[timestamp_col]))
     lookup = pd.Series(
         df[value_col].to_numpy(), index=pd.MultiIndex.from_tuples(key_pairs)

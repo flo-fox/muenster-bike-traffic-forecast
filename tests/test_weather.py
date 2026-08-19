@@ -238,6 +238,11 @@ def test_build_recent_zip_url_rejects_unknown_parameter() -> None:
         weather.build_recent_zip_url("unknown_parameter")
 
 
+def test_build_recent_zip_url_rejects_unsafe_station_id() -> None:
+    with pytest.raises(weather.WeatherFetchError):
+        weather.build_recent_zip_url("air_temperature", station_id="../../etc/evil")
+
+
 def test_resolve_historical_zip_url_parses_directory_index() -> None:
     index_html = (
         "<a href='stundenwerte_TU_00001_19500101_20241231_hist.zip'>x</a>"
@@ -431,6 +436,12 @@ def test_save_raw_weather_rejects_unknown_parameter(tmp_path: Path) -> None:
     df = pd.DataFrame({"station_id": ["01766"]})
     with pytest.raises(ValueError):
         weather.save_raw_weather(df, "unknown_parameter", "01766", tmp_path)
+
+
+def test_save_raw_weather_rejects_unsafe_station_id(tmp_path: Path) -> None:
+    df = pd.DataFrame({"station_id": ["01766"]})
+    with pytest.raises(weather.WeatherFetchError):
+        weather.save_raw_weather(df, "air_temperature", "../../etc/evil", tmp_path)
 
 
 # ---------------------------------------------------------------------------
