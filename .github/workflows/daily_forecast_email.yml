@@ -1,0 +1,30 @@
+name: Daily forecast-accuracy email
+
+on:
+  # Cron isn't DST-aware, so two entries approximate 09:00 Münster local
+  # time year-round instead of drifting an hour for half the year. The
+  # actual CET/CEST boundary falls mid-month in March/October, not on a
+  # month edge, so there's up to ~1 week each spring/autumn where this is
+  # off by an hour - accepted as a minor, self-correcting imprecision.
+  schedule:
+    - cron: "0 8 * 11,12,1,2,3 *"  # CET (UTC+1): 08:00 UTC = 09:00 local
+    - cron: "0 7 * 4,5,6,7,8,9,10 *"  # CEST (UTC+2): 07:00 UTC = 09:00 local
+  workflow_dispatch: {}  # manual trigger, for dry runs before trusting the schedule
+
+jobs:
+  send-email:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Send daily forecast report
+        env:
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python scripts/send_daily_email.py
