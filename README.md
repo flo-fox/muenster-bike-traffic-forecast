@@ -68,12 +68,42 @@ for the selected station. No API keys or credentials needed. Deployed on
 [Streamlit Community Cloud](https://streamlit.io/cloud) from this public
 repo.
 
+## Daily forecast-accuracy email
+
+A scheduled GitHub Actions workflow (`.github/workflows/daily_forecast_email.yml`,
+~09:00 Münster local time) runs `scripts/send_daily_email.py`, which:
+
+- Checks every station's forecast from ~24h ago against today's actual
+  traffic (recomputed from the same live data the dashboard uses — no
+  forecast history is stored anywhere) and shows today's fresh 24h-ahead
+  forecast too.
+- Asks Claude for a short, grounded explanation of the biggest deviations
+  (default: top 5 by absolute error).
+- Emails the result via Gmail.
+
+Unlike the dashboard, this **does** need credentials — set these as
+[GitHub Actions secrets](https://docs.github.com/en/actions/security-guides/encrypted-secrets)
+(repo Settings → Secrets and variables → Actions), never committed:
+
+- `GMAIL_ADDRESS` / `GMAIL_APP_PASSWORD` — sender, via a
+  [Gmail app password](https://support.google.com/accounts/answer/185833).
+- `RECIPIENT_EMAIL` — where the report is sent.
+- `ANTHROPIC_API_KEY` — from [console.anthropic.com](https://console.anthropic.com/).
+  **A Claude Pro/Max subscription does not cover this** — API usage is
+  billed separately from a Console account.
+
+See `.env.example` for local dry runs (`python scripts/send_daily_email.py`
+with these four variables exported).
+
 ## Layout
 
 - `notebooks/` — numbered analysis/modeling notebooks
 - `src/muenster_bike_forecast/` — reusable data loading, feature engineering,
   modeling, and live-inference code
 - `app.py` — Streamlit dashboard entry point
+- `scripts/` — one-shot orchestration entry points (currently just the
+  daily forecast-accuracy email)
+- `.github/workflows/` — scheduled CI (the daily email)
 - `models/` — mostly gitignored (regenerate from notebooks), except
   `production_random_forest.joblib` and `weekend_weekday_ratio.csv`, which
   are committed since the deployed dashboard needs them directly

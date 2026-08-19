@@ -26,7 +26,9 @@ regression experiments. Goal here is an actual, active forecasting tool.
   selection rationale" for why — and remains the option if the tree
   ensembles' ceiling ever needs breaking through.
 - `matplotlib` / `plotly` for visualization
-- Possibly a web dashboard later (framework still open)
+- Streamlit for the live dashboard (`app.py`, `dashboard_common.py`, `pages/`)
+- `anthropic` SDK for the daily forecast-accuracy email's AI explanations
+  (`scripts/send_daily_email.py`, direct API call — see "Planned additions")
 
 ## Model selection rationale
 Why tree-ensembles and Prophet were tried, and why the classic
@@ -288,6 +290,53 @@ Before treating a step as done, check it from three angles:
   hardcoded reference requires re-running the notebook that hardcodes
   it) for a display-only inconsistency; pick up here if those notebooks
   are touched again for another reason anyway.
+- **Daily forecast-accuracy email built (2026-08-19,
+  `feature/daily-forecast-email` branch)**: the "daily email" half of the
+  2026-07-26 dashboard decision (GitHub Actions + Gmail app password —
+  see the earlier "Web dashboard plan" entry above) is now actually
+  implemented, not just decided. `scripts/send_daily_email.py` (thin
+  orchestration) + `src/muenster_bike_forecast/daily_report.py` (pure
+  comparison/formatting logic, tested in `tests/test_daily_report.py`)
+  check every station's forecast from ~24h ago against today's actual
+  reading, show today's fresh 24h-ahead forecast too, and — new since
+  the original 2026-07-26 plan — ask Claude (`claude-haiku-4-5`, direct
+  API call) for a short, context-grounded explanation of the top 5
+  biggest deviations. Runs via
+  `.github/workflows/daily_forecast_email.yml`, ~09:00 Münster local
+  time (two DST-gated cron entries, since cron itself isn't DST-aware).
+  Design decisions worth knowing before touching this again:
+  - **No forecast-persistence mechanism** — "yesterday's forecast" is
+    *recomputed* each run, not stored: fetching today's ~35-day window
+    inherently includes yesterday's actual counts too, and
+    `assemble_feature_history`'s lag/rolling features are computed
+    relative to each row's own timestamp, so predicting from the row
+    ~24h before now reproduces what running it yesterday would have
+    given. **Accepted risk, not detected**: this assumes the upstream
+    bike-count source doesn't retroactively revise a past monthly CSV
+    between yesterday and today.
+  - **Direct Anthropic API call, not an MCP server** — considered as an
+    alternative (see the "Next dev priorities" project memory) and
+    rejected for this specific use case: an MCP server would need to run
+    persistently to be reachable from a one-shot cron job, which doesn't
+    fit a process that runs once daily and exits. MCP remains a live,
+    separate idea for other future use cases (e.g. interactive
+    forecast-accuracy queries from a chat session).
+  - **A Claude Pro/Max subscription does not cover this** — confirmed
+    with the user; `ANTHROPIC_API_KEY` needs its own
+    console.anthropic.com account/billing, set as a GitHub Actions
+    secret alongside the three Gmail/recipient secrets (see README.md).
+  - **Rate-limit exposure accepted, not mitigated**: fleet-wide scope
+    (23 stations × ~2 months per run ≈ 46 requests to
+    `raw.githubusercontent.com`) hits the same unthrottled source the
+    dashboard does, which has previously shown real HTTP 429s under
+    repeated fetching. No retry/backoff was added (would be speculative
+    scope beyond what was asked); mitigation is limited to a per-station
+    `SCRIPT_FETCH_ERRORS` catch (skip and continue, same pattern as
+    `dashboard_common.build_fleet_snapshot`) plus a small 0.2s courtesy
+    delay between station fetches.
+  - **Top-5-by-absolute-error default** (`daily_report.TOP_N_DEVIATIONS`)
+    — user-confirmed, but arbitrary; revisit if 5 turns out too many/few
+    once real emails start arriving.
 
 ## What Claude should avoid
 - Do not add speculative features beyond what is asked.
