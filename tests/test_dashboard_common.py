@@ -1,21 +1,34 @@
-"""Tests for `dashboard_common`'s pure chart-building/geometry logic.
+"""Tests for `dashboard_common`'s pure chart-building/geometry logic, plus
+`build_fleet_snapshot`'s station-dropping branch.
 
-Only covers functions that transform already-fetched data into a `go.Figure`
-or a coordinate table - no live fetches, no Streamlit runtime, no caching
-decorators exercised. All tests use small, hand-built synthetic data.
+Most tests here transform already-fetched data into a `go.Figure` or a
+coordinate table - no live fetches, no Streamlit runtime exercised. The
+`build_fleet_snapshot` tests are the one exception: `cached_list_stations`/
+`build_forecast` are monkeypatched so the per-station loop and its
+`FleetSnapshot.dropped_stations` bookkeeping run for real, without a live
+fetch or a Streamlit script context - `st.cache_data`/`st.warning` work
+fine called directly from a plain process. Each test clears the cache
+first so it isn't served a previous test's cached result for the same
+`as_of` date.
 """
 
 from __future__ import annotations
 
+from datetime import date
+
 import pandas as pd
 import pytest
 
+import dashboard_common
 from dashboard_common import (
     MARKER_HALO_PADDING,
+    FleetSnapshot,
     _spread_coincident_markers,
+    build_fleet_snapshot,
     render_forecast_chart,
     render_station_map,
 )
+from muenster_bike_forecast.data.bike_counts import BikeCountDataError, Station
 
 # ---------------------------------------------------------------------------
 # _spread_coincident_markers
@@ -167,3 +180,62 @@ def test_render_station_map_separates_coincident_stations() -> None:
     first_point = (data_trace.lat[0], data_trace.lon[0])
     second_point = (data_trace.lat[1], data_trace.lon[1])
     assert first_point != second_point
+
+
+# ---------------------------------------------------------------------------
+# build_fleet_snapshot
+# ---------------------------------------------------------------------------
+
+
+def _station(station_id: str, name: str) -> Station:
+    return Station(station_id=station_id, name=name, start_year=2023, channels=())
+
+
+def test_build_fleet_snapshot_reports_dropped_stations(monkeypatch) -> None:
+    build_fleet_snapshot.clear()
+    stations = [
+        _station("100020113", "Good Station"),
+        _station("999999999", "Broken Station"),
+    ]
+    monkeypatch.setattr(dashboard_common, "cached_list_stations", lambda: stations)
+
+    def fake_build_forecast(station: Station, as_of: date) -> dict[str, object]:
+        if station.station_id == "999999999":
+            raise BikeCountDataError("no usable rows")
+        return {
+            "current_row": pd.Series(
+                {"total_count": 5.0, "datetime": pd.Timestamp(as_of)}
+            ),
+            "forecast_value": 6.0,
+        }
+
+    monkeypatch.setattr(dashboard_common, "build_forecast", fake_build_forecast)
+
+    result = build_fleet_snapshot(date(2026, 8, 19))
+
+    assert isinstance(result, FleetSnapshot)
+    assert result.dropped_stations == ["Broken Station"]
+    assert list(result.data["station_id"]) == ["100020113"]
+
+
+def test_build_fleet_snapshot_has_no_dropped_stations_when_all_succeed(
+    monkeypatch,
+) -> None:
+    build_fleet_snapshot.clear()
+    stations = [_station("100020113", "Good Station")]
+    monkeypatch.setattr(dashboard_common, "cached_list_stations", lambda: stations)
+
+    def fake_build_forecast(station: Station, as_of: date) -> dict[str, object]:
+        return {
+            "current_row": pd.Series(
+                {"total_count": 5.0, "datetime": pd.Timestamp(as_of)}
+            ),
+            "forecast_value": 6.0,
+        }
+
+    monkeypatch.setattr(dashboard_common, "build_forecast", fake_build_forecast)
+
+    result = build_fleet_snapshot(date(2026, 8, 20))
+
+    assert result.dropped_stations == []
+    assert len(result.data) == 1

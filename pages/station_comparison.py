@@ -12,7 +12,12 @@ from datetime import date
 import plotly.graph_objects as go
 import streamlit as st
 
-from dashboard_common import FETCH_ERRORS, build_fleet_snapshot, render_footer
+from dashboard_common import (
+    FETCH_ERRORS,
+    build_fleet_snapshot,
+    render_dropped_stations_warning,
+    render_footer,
+)
 
 st.title("📊 Station comparison")
 st.caption(
@@ -22,10 +27,14 @@ st.caption(
 
 as_of = date.today()
 try:
-    snapshot = build_fleet_snapshot(as_of)
+    fleet_snapshot = build_fleet_snapshot(as_of)
 except FETCH_ERRORS as exc:
     st.error(f"Could not build the station comparison: {exc}")
     st.stop()
+
+render_dropped_stations_warning(fleet_snapshot)
+
+snapshot = fleet_snapshot.data
 if snapshot.empty:
     st.info("No station currently has recent enough data to compare.")
     st.stop()

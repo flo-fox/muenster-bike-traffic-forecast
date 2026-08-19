@@ -134,6 +134,34 @@ def test_assemble_feature_history_raises_on_empty_input() -> None:
         )
 
 
+def test_assemble_feature_history_raises_on_non_numeric_station_id() -> None:
+    # `_validate_station_id` in `data.bike_counts` allows any
+    # `[A-Za-z0-9_-]+` id (it only guards against path traversal), so a
+    # station id like "ABC-01" can reach here even though it can't be cast
+    # to the int64 dtype the production model expects.
+    raw = _raw_bike_df()
+    raw["station_id"] = "ABC-01"
+    weather = _weather_wide_df(raw["datetime"])
+
+    with pytest.raises(InferenceError):
+        assemble_feature_history(
+            raw, weather, _public_holidays_df(), _school_holidays_df(), _ratio_table()
+        )
+
+
+def test_assemble_feature_history_raises_on_out_of_range_numeric_station_id() -> None:
+    # A purely numeric id can still be too large for int64 - `astype`
+    # raises `OverflowError` for this case, not `ValueError`/`TypeError`.
+    raw = _raw_bike_df()
+    raw["station_id"] = "999999999999999999999999999"
+    weather = _weather_wide_df(raw["datetime"])
+
+    with pytest.raises(InferenceError):
+        assemble_feature_history(
+            raw, weather, _public_holidays_df(), _school_holidays_df(), _ratio_table()
+        )
+
+
 def test_assemble_feature_history_raises_when_station_missing_from_ratio_table() -> (
     None
 ):

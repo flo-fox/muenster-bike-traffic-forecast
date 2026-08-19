@@ -10,7 +10,9 @@ module) is imported.
 
 from __future__ import annotations
 
+import logging
 import math
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
@@ -43,6 +45,8 @@ from muenster_bike_forecast.data.weather import (
 from muenster_bike_forecast.modeling.lag_features import LagFeatureError
 from muenster_bike_forecast.modeling.model_table import ModelTableError
 from muenster_bike_forecast import inference
+
+logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 MODEL_PATH = PROJECT_ROOT / "models" / "production_random_forest.joblib"
@@ -185,19 +189,45 @@ def build_forecast(station: Station, as_of: date) -> dict[str, object]:
     }
 
 
+@dataclass(frozen=True)
+class FleetSnapshot:
+    """Result of `build_fleet_snapshot`: the usable rows plus what was dropped.
+
+    Attributes:
+        data: One row per station with usable recent data.
+        dropped_stations: Names of stations skipped because no usable
+            recent data was available, in `cached_list_stations()` order.
+            Empty when every station had usable data.
+    """
+
+    data: pd.DataFrame
+    dropped_stations: list[str]
+
+
 @st.cache_data(ttl=900, show_spinner="Building city-wide snapshot…")
-def build_fleet_snapshot(as_of: date) -> pd.DataFrame:
+def build_fleet_snapshot(as_of: date) -> FleetSnapshot:
     """Builds a current-count + 24h-forecast snapshot across every station.
 
-    Stations with no usable recent data are silently skipped (rather than
-    failing the whole snapshot) — the per-station detail page already
-    surfaces that error clearly for whichever station the user has selected.
+    Stations with no usable recent data are skipped (rather than failing
+    the whole snapshot) but named in the returned `dropped_stations`, so a
+    caller can surface that some stations are missing instead of the
+    comparison/map silently looking complete with fewer rows than
+    stations. The per-station detail page separately surfaces the
+    underlying error for whichever single station the user has selected.
     """
     rows = []
+    dropped = []
     for station in cached_list_stations():
         try:
             result = build_forecast(station, as_of)
-        except FETCH_ERRORS:
+        except FETCH_ERRORS as exc:
+            logger.warning(
+                "Dropping station %s (%s) from fleet snapshot: %s",
+                station.station_id,
+                station.name,
+                exc,
+            )
+            dropped.append(station.name)
             continue
         current_row = result["current_row"]
         rows.append(
@@ -209,7 +239,25 @@ def build_fleet_snapshot(as_of: date) -> pd.DataFrame:
                 "forecast_value": result["forecast_value"],
             }
         )
-    return pd.DataFrame(rows)
+    return FleetSnapshot(data=pd.DataFrame(rows), dropped_stations=dropped)
+
+
+def render_dropped_stations_warning(fleet_snapshot: FleetSnapshot) -> None:
+    """Shows an `st.warning` naming skipped stations, if any were dropped.
+
+    Shared by every page that calls `build_fleet_snapshot` so the wording
+    can't drift between pages; the underlying reason for each drop is only
+    logged server-side (see `build_fleet_snapshot`), not shown here, since
+    it isn't this project's convention to introduce per-station diagnostic
+    UI beyond naming what's missing.
+    """
+    if not fleet_snapshot.dropped_stations:
+        return
+    st.warning(
+        f"{len(fleet_snapshot.dropped_stations)} station(s) have no recent "
+        f"enough data and are not shown: "
+        f"{', '.join(fleet_snapshot.dropped_stations)}."
+    )
 
 
 def render_forecast_chart(

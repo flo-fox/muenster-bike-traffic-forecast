@@ -1,0 +1,8 @@
+# Suppresses Streamlit's default behavior of rendering full Python
+# tracebacks (including this server's local file paths) in the browser
+# on an uncaught exception. Dashboard code should still catch expected
+# error types explicitly (see `dashboard_common.FETCH_ERRORS`) and show a
+# clean `st.error`/`st.warning` message - this is a backstop for anything
+# that still escapes uncaught, not a substitute for that handling.
+[client]
+showErrorDetails = false

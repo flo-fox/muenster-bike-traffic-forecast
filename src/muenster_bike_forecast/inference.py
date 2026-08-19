@@ -164,8 +164,12 @@ def assemble_feature_history(
         the training pipeline handles the same near-start-of-coverage case.
 
     Raises:
-        InferenceError: if `raw_bike_df` is empty, or its station has no
-            matching row in `ratio_table`.
+        InferenceError: if `raw_bike_df` is empty, its `station_id` values
+            cannot be cast to `int64` (the source repo's station ids are
+            validated as filename-safe but not as numeric - and not as
+            bounded, so an all-digit id can still overflow `int64` - so a
+            non-numeric or out-of-range id would otherwise crash here), or
+            its station has no matching row in `ratio_table`.
     """
     if raw_bike_df.empty:
         raise InferenceError(
@@ -173,7 +177,13 @@ def assemble_feature_history(
         )
 
     working = raw_bike_df.copy()
-    working["station_id"] = working["station_id"].astype("int64")
+    try:
+        working["station_id"] = working["station_id"].astype("int64")
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise InferenceError(
+            f"station_id values are not all valid int64, e.g. "
+            f"{working['station_id'].iloc[0]!r}: {exc}"
+        ) from exc
 
     localized = localize_bike_timestamps(working)
     joined = join_station_weather(
