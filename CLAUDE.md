@@ -245,17 +245,45 @@ Before treating a step as done, check it from three angles:
   inside the nominal test window. Fixed by adding an
   `embargo: pd.Timedelta = DEFAULT_HORIZON` parameter that now excludes
   `[cutoff - embargo, cutoff)` from train by default (pass
-  `embargo=pd.Timedelta(0)` to reproduce the old behavior). **Not yet
-  done**: every notebook that calls `chronological_split(` without an
-  explicit `embargo=` (06, 08, 09, 10, 11, 13, 14, 15, 16, 17 — i.e. every
-  metric quoted elsewhere in this file, including the production model's
-  "MAE 27.07 / RMSE 53.70") now trains on marginally fewer rows than when
-  those numbers were produced, and none of these notebooks have been
-  re-run against the new default. Expected impact is small (the dropped
-  window is ~96 rows/station out of ~2.16M train rows), but the committed
-  metrics are technically stale until each notebook gets a fresh
-  Restart & Run All. Re-running all ten was out of scope for the fix
-  itself — pick up here before trusting any of them as current.
+  `embargo=pd.Timedelta(0)` to reproduce the old behavior). **Re-run
+  complete (2026-08-19)**: all ten notebooks (06, 08, 09, 10, 11, 13, 14,
+  15, 16, 17) have had a fresh Restart & Run All against the new embargo
+  default — impact was indeed small, as expected (the dropped window is
+  ~96 rows/station out of ~2.16M train rows). Test-set metrics barely
+  moved since the embargo only trims train rows near the cutoff, not the
+  test window itself: baseline unchanged (39.34/77.25), GBM 28.73/54.69
+  (was 28.57/54.53), LightGBM 28.36/54.29 (was 28.56/54.44), MLP
+  29.13/56.68 (was 28.57/55.57), random forest (notebook 14 config)
+  27.42/54.17 (was 27.34/54.13). **The production model's headline
+  number is now MAE 27.14 / RMSE 53.71** (`RandomForestRegressor`,
+  `max_samples=0.30`, base feature set + `weekend_weekday_ratio`,
+  notebook 17), down from the previously-quoted 27.07/53.70 — still the
+  best model tried, still the recommended production config, no
+  conclusion in this file changes.
+
+  One real bug surfaced along the way, now fixed: notebook 16 has a
+  built-in reproduction check against notebook 14's number
+  (`np.isclose(...)` against a hardcoded constant) that started printing
+  `False` once 14 was re-run with the new embargo default and 16 wasn't
+  updated to match — the hardcoded GBM/LightGBM/MLP/RF-target reference
+  constants in notebook 16's cell were stale pre-embargo values. Fixed by
+  updating those constants to the fresh post-embargo numbers above and
+  re-running; the check now prints `True`.
+
+  **Known residual staleness, not fixed**: notebooks 09, 11, 14, 15, and
+  17 also carry hardcoded cross-notebook reference constants (e.g.
+  notebook 15's `RF_BASELINE_OVERALL` still cites notebook 14's
+  *pre-embargo* 27.343144/54.130155 rather than 14's fresh
+  27.415694/54.172414) copied in from before the embargo fix, the same
+  pattern notebook 16 had. Unlike 16, none of these assert a pass/fail
+  check that now reads as visibly wrong — they're display-only
+  comparison rows/prose — and every affected difference is sub-1%
+  relative, so no ranking or written conclusion in this file or those
+  notebooks changes if corrected. Left as-is to avoid another full
+  retraining cascade (09 → 11 → 14 → 15 → 16 → 17, since fixing one
+  hardcoded reference requires re-running the notebook that hardcodes
+  it) for a display-only inconsistency; pick up here if those notebooks
+  are touched again for another reason anyway.
 
 ## What Claude should avoid
 - Do not add speculative features beyond what is asked.
