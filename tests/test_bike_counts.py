@@ -119,6 +119,42 @@ def test_parse_station_csv_non_numeric_value_raises() -> None:
         parse_station_csv(csv_text, station_id="300038855")
 
 
+def test_parse_station_csv_non_numeric_count_still_raises_with_valid_status() -> None:
+    # The count/status validation split must not accidentally let a bad
+    # count value through just because its status column is fine.
+    csv_text = (
+        "Datetime,300038855 (Bismarckallee),300038855-status\n"
+        "2025-01-01 00:00,not_a_number,modified\n"
+    )
+    with pytest.raises(BikeCountDataError, match="non-numeric"):
+        parse_station_csv(csv_text, station_id="300038855")
+
+
+def test_parse_station_csv_known_status_flag_is_accepted() -> None:
+    # The source repo emits "modified" (not a numeric code) for a
+    # manually-corrected reading (observed on station 300037931, 2026-07) -
+    # this is a legitimate value, not malformed data, and must not raise.
+    csv_text = (
+        "Datetime,300038855 (Bismarckallee),300038855-status\n"
+        "2025-01-01 00:00,2,modified\n"
+    )
+    df = parse_station_csv(csv_text, station_id="300038855")
+    assert df["300038855-status"].iloc[0] == "modified"
+    assert df["300038855 (Bismarckallee)"].iloc[0] == 2
+
+
+def test_parse_station_csv_unknown_non_numeric_status_still_raises() -> None:
+    # Only the specific known flag(s) are accepted - an arbitrary garbage
+    # string in a status column must still be treated as a schema
+    # violation, not silently passed through.
+    csv_text = (
+        "Datetime,300038855 (Bismarckallee),300038855-status\n"
+        "2025-01-01 00:00,2,definitely_not_a_status\n"
+    )
+    with pytest.raises(BikeCountDataError, match="status"):
+        parse_station_csv(csv_text, station_id="300038855")
+
+
 def test_parse_station_csv_duplicate_timestamp_raises() -> None:
     csv_text = (
         "Datetime,300038855 (Bismarckallee),300038855-status\n"

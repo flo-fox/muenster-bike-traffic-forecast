@@ -23,10 +23,21 @@ from typing import Final
 
 import pandas as pd
 
-from muenster_bike_forecast.data.join import join_station_weather, localize_bike_timestamps
-from muenster_bike_forecast.modeling.feature_followups import add_weekend_weekday_ratio_feature
-from muenster_bike_forecast.modeling.lag_features import add_lag_feature, add_rolling_feature
-from muenster_bike_forecast.modeling.model_table import add_calendar_features, compute_total_count
+from muenster_bike_forecast.data.join import (
+    join_station_weather,
+    localize_bike_timestamps,
+)
+from muenster_bike_forecast.modeling.feature_followups import (
+    add_weekend_weekday_ratio_feature,
+)
+from muenster_bike_forecast.modeling.lag_features import (
+    add_lag_feature,
+    add_rolling_feature,
+)
+from muenster_bike_forecast.modeling.model_table import (
+    add_calendar_features,
+    compute_total_count,
+)
 
 LAG_SPECS: Final[dict[str, pd.Timedelta]] = {
     "lag_1h": pd.Timedelta(hours=1),
@@ -85,7 +96,9 @@ class InferenceError(Exception):
     """
 
 
-def months_needed(as_of: date, lookback: pd.Timedelta = MIN_HISTORY_LOOKBACK) -> list[tuple[int, int]]:
+def months_needed(
+    as_of: date, lookback: pd.Timedelta = MIN_HISTORY_LOOKBACK
+) -> list[tuple[int, int]]:
     """Lists the distinct calendar (year, month) pairs a lookback window spans.
 
     Pure helper for callers deciding which monthly bike-count files to fetch
@@ -102,7 +115,9 @@ def months_needed(as_of: date, lookback: pd.Timedelta = MIN_HISTORY_LOOKBACK) ->
     """
     start = pd.Timestamp(as_of) - lookback
     end = pd.Timestamp(as_of)
-    months = pd.period_range(start=start.strftime("%Y-%m"), end=end.strftime("%Y-%m"), freq="M")
+    months = pd.period_range(
+        start=start.strftime("%Y-%m"), end=end.strftime("%Y-%m"), freq="M"
+    )
     return [(int(period.year), int(period.month)) for period in months]
 
 
@@ -161,7 +176,9 @@ def assemble_feature_history(
     working["station_id"] = working["station_id"].astype("int64")
 
     localized = localize_bike_timestamps(working)
-    joined = join_station_weather(localized, weather_wide_df, tolerance=WEATHER_JOIN_TOLERANCE)
+    joined = join_station_weather(
+        localized, weather_wide_df, tolerance=WEATHER_JOIN_TOLERANCE
+    )
     total_count = compute_total_count(joined)
 
     weather_columns = [
@@ -176,7 +193,9 @@ def assemble_feature_history(
     for feature_col, lag in LAG_SPECS.items():
         slim = add_lag_feature(slim, lag=lag, feature_col=feature_col)
     for feature_col, window in ROLLING_SPECS.items():
-        slim = add_rolling_feature(slim, window=window, feature_col=feature_col, stat="mean")
+        slim = add_rolling_feature(
+            slim, window=window, feature_col=feature_col, stat="mean"
+        )
 
     slim = add_calendar_features(slim, public_holidays_df, school_holidays_df)
 

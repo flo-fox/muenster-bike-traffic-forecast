@@ -10,6 +10,7 @@ module) is imported.
 
 from __future__ import annotations
 
+import math
 from datetime import date
 from pathlib import Path
 
@@ -131,7 +132,12 @@ def build_forecast(station: Station, as_of: date) -> dict[str, object]:
 
     Raises:
         inference.InferenceError: if no recent bike-count data is available
-            for `station`, or the assembled feature row cannot be scored.
+            for `station`, the assembled feature row cannot be scored, or a
+            committed model artifact (the model file, the ratio table) is
+            missing on this server - translated from the underlying
+            `FileNotFoundError` so callers only need to catch one error
+            family, and so the artifact's server-local path never reaches a
+            page's error message.
     """
     frames = []
     for year, month in inference.months_needed(as_of):
@@ -149,21 +155,27 @@ def build_forecast(station: Station, as_of: date) -> dict[str, object]:
 
     weather_wide_df = cached_recent_weather()
     public_holidays_df, school_holidays_df = cached_calendar_tables(as_of.year)
-    ratio_table = load_ratio_table()
+    try:
+        ratio_table = load_ratio_table()
 
-    history = inference.assemble_feature_history(
-        raw_bike_df,
-        weather_wide_df,
-        public_holidays_df,
-        school_holidays_df,
-        ratio_table,
-    )
-    current_row = inference.latest_feature_row(history, station.station_id)
-    model = load_model()
-    forecast_value = inference.predict_24h_ahead(model, current_row)
-    forecast_curve = inference.predict_forecast_curve(
-        model, history, station.station_id, current_row["datetime"]
-    )
+        history = inference.assemble_feature_history(
+            raw_bike_df,
+            weather_wide_df,
+            public_holidays_df,
+            school_holidays_df,
+            ratio_table,
+        )
+        current_row = inference.latest_feature_row(history, station.station_id)
+        model = load_model()
+        forecast_value = inference.predict_24h_ahead(model, current_row)
+        forecast_curve = inference.predict_forecast_curve(
+            model, history, station.station_id, current_row["datetime"]
+        )
+    except FileNotFoundError as exc:
+        raise inference.InferenceError(
+            "A required model artifact is missing on this server; the app "
+            "cannot serve forecasts until it is restored."
+        ) from exc
 
     return {
         "history": history,
@@ -276,6 +288,40 @@ def render_forecast_chart(
 
 MARKER_SIZE_RANGE = (14, 34)
 MARKER_HALO_PADDING = 8
+# ~30m at Münster's latitude - enough to visually separate two coincident
+# markers without materially misrepresenting either station's location.
+COINCIDENT_MARKER_OFFSET_DEGREES = 0.00025
+
+
+def _spread_coincident_markers(locations: pd.DataFrame) -> pd.DataFrame:
+    """Nudges markers that share exact coordinates apart in a small circle.
+
+    Some station coordinates are a documented, intentional approximation
+    (e.g. `notebooks/07_descriptive_analysis.ipynb`'s
+    `GEOCODE_QUERY_OVERRIDES` maps two distinct "Kanalpromenade" path
+    segments, station ids 100053305 and 300037936, to the same generic
+    fallback query) rather than an error - so the fix belongs here, in how
+    coincident points are drawn, not in the cached coordinates themselves.
+    Without this, one marker fully occludes the other on the map.
+
+    Args:
+        locations: Station coordinates with ``lat``/``lon`` columns.
+
+    Returns:
+        Copy of `locations` with `lat`/`lon` perturbed for every station
+        that shares its exact coordinates with at least one other row;
+        stations with a unique coordinate are returned unchanged.
+    """
+    result = locations.copy()
+    for _, group in result.groupby(["lat", "lon"]):
+        if len(group) < 2:
+            continue
+        n = len(group)
+        for offset, idx in enumerate(group.index):
+            angle = 2 * math.pi * offset / n
+            result.loc[idx, "lat"] += COINCIDENT_MARKER_OFFSET_DEGREES * math.cos(angle)
+            result.loc[idx, "lon"] += COINCIDENT_MARKER_OFFSET_DEGREES * math.sin(angle)
+    return result
 
 
 def render_station_map(snapshot: pd.DataFrame, locations: pd.DataFrame) -> go.Figure:
@@ -295,7 +341,10 @@ def render_station_map(snapshot: pd.DataFrame, locations: pd.DataFrame) -> go.Fi
     automatic bubble sizing) so the halo can be sized in lockstep with the
     data markers it sits behind.
     """
-    merged = snapshot.merge(locations[["station_id", "lat", "lon"]], on="station_id")
+    spread_locations = _spread_coincident_markers(
+        locations[["station_id", "lat", "lon"]]
+    )
+    merged = snapshot.merge(spread_locations, on="station_id")
     merged["label"] = merged["name"] + " (" + merged["station_id"] + ")"
 
     value = merged["forecast_value"]

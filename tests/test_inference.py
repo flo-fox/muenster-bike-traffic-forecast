@@ -45,9 +45,9 @@ def _raw_bike_df() -> pd.DataFrame:
 
 def _weather_wide_df(bike_datetimes: pd.Series) -> pd.DataFrame:
     """Hourly weather rows exactly matching each bike timestamp's UTC equivalent."""
-    localized = localize_bike_timestamps(
-        pd.DataFrame({"datetime": bike_datetimes})
-    )["timestamp"]
+    localized = localize_bike_timestamps(pd.DataFrame({"datetime": bike_datetimes}))[
+        "timestamp"
+    ]
     return pd.DataFrame(
         {
             "station_id": ["01766"] * len(localized),
@@ -134,7 +134,9 @@ def test_assemble_feature_history_raises_on_empty_input() -> None:
         )
 
 
-def test_assemble_feature_history_raises_when_station_missing_from_ratio_table() -> None:
+def test_assemble_feature_history_raises_when_station_missing_from_ratio_table() -> (
+    None
+):
     raw = _raw_bike_df()
     weather = _weather_wide_df(raw["datetime"])
 

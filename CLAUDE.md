@@ -14,10 +14,14 @@ regression experiments. Goal here is an actual, active forecasting tool.
   (notebook 09) as the tree-ensemble candidates, `Prophet` (notebook 10) as
   a per-station seasonal-decomposition alternative, `MLPRegressor` (sklearn,
   notebook 11) as a first neural-net pass, `RandomForestRegressor` (sklearn,
-  notebook 14) as a fourth tree-based class and currently the best model
-  tried — see "Model selection rationale" below for why these were tried
-  and not linear regression/a single tree/SVM, and for the random-forest
-  result. A sequence-aware architecture (LSTM/GRU + a learned `station_id`
+  notebook 14) as a fourth tree-based class — see "Model selection
+  rationale" below for why these were tried and not linear regression/a
+  single tree/SVM, and for the random-forest result. Random forest is the
+  best model class tried; the actual best-tried *configuration* is
+  notebook 17's production model (base random forest + notebook 15's
+  `weekend_weekday_ratio` feature + a tuned `max_samples`), currently the
+  recommended approach — see "Model selection rationale" for both. A
+  sequence-aware architecture (LSTM/GRU + a learned `station_id`
   embedding) was researched but deferred rather than built — see "Model
   selection rationale" for why — and remains the option if the tree
   ensembles' ceiling ever needs breaking through.

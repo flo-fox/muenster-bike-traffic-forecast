@@ -79,15 +79,62 @@ def check_python_docstrings(path: Path, tree: ast.Module) -> list[str]:
     return issues
 
 
+def _function_source_blocks(source: str, tree: ast.Module) -> list[str]:
+    """Splits `source` into one block per top-level function/method, plus a
+    final block for whatever module-level code sits outside any function.
+
+    A whole-file caption check is too coarse for a file with more than one
+    chart-creating function (e.g. `dashboard_common.py`'s
+    `render_forecast_chart` and `render_station_map`): a caption anywhere
+    in the file would satisfy the check for *every* chart, including a
+    future chart-creating function added with no caption of its own. This
+    mirrors `check_notebook_file`'s per-cell "nearby" window, at
+    function-body granularity instead of cell granularity.
+
+    Files with no function defs at all (e.g. the Streamlit `pages/*.py`
+    scripts, which are flat top-level code) fall back to one block for the
+    whole file - equivalent to the previous whole-file check, which is
+    already correct for that shape of file (one chart, one nearby caption).
+    """
+    lines = source.splitlines(keepends=True)
+    func_line_ranges: list[tuple[int, int]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            end = getattr(node, "end_lineno", None) or node.lineno
+            func_line_ranges.append((node.lineno, end))
+
+    if not func_line_ranges:
+        return [source]
+
+    blocks = ["".join(lines[start - 1 : end]) for start, end in func_line_ranges]
+    covered = {ln for start, end in func_line_ranges for ln in range(start, end + 1)}
+    module_level = "".join(
+        line for i, line in enumerate(lines, start=1) if i not in covered
+    )
+    blocks.append(module_level)
+    return blocks
+
+
 def check_chart_caption(path: Path, source: str) -> list[str]:
-    """Flag a chart-creating source with no nearby data-source caption."""
-    if not CHART_PATTERN.search(source) or CAPTION_PATTERN.search(source):
-        return []
-    return [f"{path.name}: chart created without a nearby data-source caption"]
+    """Flag a chart-creating function/module-level block with no nearby
+    data-source caption - see `_function_source_blocks`."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        blocks = [source]
+    else:
+        blocks = _function_source_blocks(source, tree)
+
+    if any(
+        CHART_PATTERN.search(block) and not CAPTION_PATTERN.search(block)
+        for block in blocks
+    ):
+        return [f"{path.name}: chart created without a nearby data-source caption"]
+    return []
 
 
 def check_python_file(path: Path) -> list[str]:
-    """Check a .py file: caption anywhere, docstrings/hints only under src/."""
+    """Check a .py file: caption near each chart, docstrings/hints only under src/."""
     try:
         source = path.read_text(encoding="utf-8")
     except OSError:
