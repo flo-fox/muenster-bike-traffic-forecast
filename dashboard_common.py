@@ -10,6 +10,9 @@ module) is imported.
 
 from __future__ import annotations
 
+import logging
+import math
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
@@ -42,6 +45,8 @@ from muenster_bike_forecast.data.weather import (
 from muenster_bike_forecast.modeling.lag_features import LagFeatureError
 from muenster_bike_forecast.modeling.model_table import ModelTableError
 from muenster_bike_forecast import inference
+
+logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 MODEL_PATH = PROJECT_ROOT / "models" / "production_random_forest.joblib"
@@ -131,7 +136,12 @@ def build_forecast(station: Station, as_of: date) -> dict[str, object]:
 
     Raises:
         inference.InferenceError: if no recent bike-count data is available
-            for `station`, or the assembled feature row cannot be scored.
+            for `station`, the assembled feature row cannot be scored, or a
+            committed model artifact (the model file, the ratio table) is
+            missing on this server - translated from the underlying
+            `FileNotFoundError` so callers only need to catch one error
+            family, and so the artifact's server-local path never reaches a
+            page's error message.
     """
     frames = []
     for year, month in inference.months_needed(as_of):
@@ -149,21 +159,27 @@ def build_forecast(station: Station, as_of: date) -> dict[str, object]:
 
     weather_wide_df = cached_recent_weather()
     public_holidays_df, school_holidays_df = cached_calendar_tables(as_of.year)
-    ratio_table = load_ratio_table()
+    try:
+        ratio_table = load_ratio_table()
 
-    history = inference.assemble_feature_history(
-        raw_bike_df,
-        weather_wide_df,
-        public_holidays_df,
-        school_holidays_df,
-        ratio_table,
-    )
-    current_row = inference.latest_feature_row(history, station.station_id)
-    model = load_model()
-    forecast_value = inference.predict_24h_ahead(model, current_row)
-    forecast_curve = inference.predict_forecast_curve(
-        model, history, station.station_id, current_row["datetime"]
-    )
+        history = inference.assemble_feature_history(
+            raw_bike_df,
+            weather_wide_df,
+            public_holidays_df,
+            school_holidays_df,
+            ratio_table,
+        )
+        current_row = inference.latest_feature_row(history, station.station_id)
+        model = load_model()
+        forecast_value = inference.predict_24h_ahead(model, current_row)
+        forecast_curve = inference.predict_forecast_curve(
+            model, history, station.station_id, current_row["datetime"]
+        )
+    except FileNotFoundError as exc:
+        raise inference.InferenceError(
+            "A required model artifact is missing on this server; the app "
+            "cannot serve forecasts until it is restored."
+        ) from exc
 
     return {
         "history": history,
@@ -173,19 +189,45 @@ def build_forecast(station: Station, as_of: date) -> dict[str, object]:
     }
 
 
+@dataclass(frozen=True)
+class FleetSnapshot:
+    """Result of `build_fleet_snapshot`: the usable rows plus what was dropped.
+
+    Attributes:
+        data: One row per station with usable recent data.
+        dropped_stations: Names of stations skipped because no usable
+            recent data was available, in `cached_list_stations()` order.
+            Empty when every station had usable data.
+    """
+
+    data: pd.DataFrame
+    dropped_stations: list[str]
+
+
 @st.cache_data(ttl=900, show_spinner="Building city-wide snapshot…")
-def build_fleet_snapshot(as_of: date) -> pd.DataFrame:
+def build_fleet_snapshot(as_of: date) -> FleetSnapshot:
     """Builds a current-count + 24h-forecast snapshot across every station.
 
-    Stations with no usable recent data are silently skipped (rather than
-    failing the whole snapshot) — the per-station detail page already
-    surfaces that error clearly for whichever station the user has selected.
+    Stations with no usable recent data are skipped (rather than failing
+    the whole snapshot) but named in the returned `dropped_stations`, so a
+    caller can surface that some stations are missing instead of the
+    comparison/map silently looking complete with fewer rows than
+    stations. The per-station detail page separately surfaces the
+    underlying error for whichever single station the user has selected.
     """
     rows = []
+    dropped = []
     for station in cached_list_stations():
         try:
             result = build_forecast(station, as_of)
-        except FETCH_ERRORS:
+        except FETCH_ERRORS as exc:
+            logger.warning(
+                "Dropping station %s (%s) from fleet snapshot: %s",
+                station.station_id,
+                station.name,
+                exc,
+            )
+            dropped.append(station.name)
             continue
         current_row = result["current_row"]
         rows.append(
@@ -197,7 +239,25 @@ def build_fleet_snapshot(as_of: date) -> pd.DataFrame:
                 "forecast_value": result["forecast_value"],
             }
         )
-    return pd.DataFrame(rows)
+    return FleetSnapshot(data=pd.DataFrame(rows), dropped_stations=dropped)
+
+
+def render_dropped_stations_warning(fleet_snapshot: FleetSnapshot) -> None:
+    """Shows an `st.warning` naming skipped stations, if any were dropped.
+
+    Shared by every page that calls `build_fleet_snapshot` so the wording
+    can't drift between pages; the underlying reason for each drop is only
+    logged server-side (see `build_fleet_snapshot`), not shown here, since
+    it isn't this project's convention to introduce per-station diagnostic
+    UI beyond naming what's missing.
+    """
+    if not fleet_snapshot.dropped_stations:
+        return
+    st.warning(
+        f"{len(fleet_snapshot.dropped_stations)} station(s) have no recent "
+        f"enough data and are not shown: "
+        f"{', '.join(fleet_snapshot.dropped_stations)}."
+    )
 
 
 def render_forecast_chart(
@@ -276,6 +336,40 @@ def render_forecast_chart(
 
 MARKER_SIZE_RANGE = (14, 34)
 MARKER_HALO_PADDING = 8
+# ~30m at Münster's latitude - enough to visually separate two coincident
+# markers without materially misrepresenting either station's location.
+COINCIDENT_MARKER_OFFSET_DEGREES = 0.00025
+
+
+def _spread_coincident_markers(locations: pd.DataFrame) -> pd.DataFrame:
+    """Nudges markers that share exact coordinates apart in a small circle.
+
+    Some station coordinates are a documented, intentional approximation
+    (e.g. `notebooks/07_descriptive_analysis.ipynb`'s
+    `GEOCODE_QUERY_OVERRIDES` maps two distinct "Kanalpromenade" path
+    segments, station ids 100053305 and 300037936, to the same generic
+    fallback query) rather than an error - so the fix belongs here, in how
+    coincident points are drawn, not in the cached coordinates themselves.
+    Without this, one marker fully occludes the other on the map.
+
+    Args:
+        locations: Station coordinates with ``lat``/``lon`` columns.
+
+    Returns:
+        Copy of `locations` with `lat`/`lon` perturbed for every station
+        that shares its exact coordinates with at least one other row;
+        stations with a unique coordinate are returned unchanged.
+    """
+    result = locations.copy()
+    for _, group in result.groupby(["lat", "lon"]):
+        if len(group) < 2:
+            continue
+        n = len(group)
+        for offset, idx in enumerate(group.index):
+            angle = 2 * math.pi * offset / n
+            result.loc[idx, "lat"] += COINCIDENT_MARKER_OFFSET_DEGREES * math.cos(angle)
+            result.loc[idx, "lon"] += COINCIDENT_MARKER_OFFSET_DEGREES * math.sin(angle)
+    return result
 
 
 def render_station_map(snapshot: pd.DataFrame, locations: pd.DataFrame) -> go.Figure:
@@ -295,7 +389,10 @@ def render_station_map(snapshot: pd.DataFrame, locations: pd.DataFrame) -> go.Fi
     automatic bubble sizing) so the halo can be sized in lockstep with the
     data markers it sits behind.
     """
-    merged = snapshot.merge(locations[["station_id", "lat", "lon"]], on="station_id")
+    spread_locations = _spread_coincident_markers(
+        locations[["station_id", "lat", "lon"]]
+    )
+    merged = snapshot.merge(spread_locations, on="station_id")
     merged["label"] = merged["name"] + " (" + merged["station_id"] + ")"
 
     value = merged["forecast_value"]

@@ -21,7 +21,7 @@ st.title("📍 Station forecast")
 st.caption(
     "24h-ahead bike-traffic prediction per counting station, from live "
     "bike-count and weather data. Production model: random forest, "
-    "MAE 27.07 / RMSE 53.70 on held-out data (see `notebooks/17_final_production_model.ipynb`)."
+    "MAE 27.14 / RMSE 53.71 on held-out data (see `notebooks/17_final_production_model.ipynb`)."
 )
 
 try:
@@ -45,7 +45,9 @@ except FETCH_ERRORS as exc:
 current_row = result["current_row"]
 forecast_value = result["forecast_value"]
 target_time = current_row["datetime"] + pd.Timedelta(hours=24)
-data_age = pd.Timestamp.now(tz="Europe/Berlin").tz_localize(None) - current_row["datetime"]
+data_age = (
+    pd.Timestamp.now(tz="Europe/Berlin").tz_localize(None) - current_row["datetime"]
+)
 
 col1, col2, col3 = st.columns(3)
 col1.metric("Current count (per 15 min)", f"{current_row['total_count']:.0f}")

@@ -59,13 +59,23 @@ _SOURCE_DATETIME_FORMAT: Final[str] = "%Y-%m-%d %H:%M"
 _STATION_ID_RE: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9_-]+$")
 _FORMULA_TRIGGER_PREFIXES: Final[tuple[str, ...]] = ("=", "+", "-", "@", "\t", "\r")
 
+# Status columns are metadata about a count value's quality, not the count
+# itself (see `identify_channel_count_columns` in `modeling/model_table.py`,
+# which never selects them - they're dropped before modeling). The source
+# repo mostly uses numeric status codes but has been observed emitting this
+# literal string for a manually-corrected reading (e.g. station 300037931,
+# 2026-07); it's a legitimate value, not malformed data.
+_KNOWN_NON_NUMERIC_STATUS_VALUES: Final[frozenset[str]] = frozenset({"modified"})
+
 
 class BikeCountDataError(Exception):
     """Raised when bike-count data from the source repo fails validation.
 
     Covers HTTP/CSV content that does not match the expected schema:
     missing columns, mismatched count/status channel pairs, unparsable
-    timestamps, duplicate timestamps, or non-numeric count/status values.
+    timestamps, duplicate timestamps, non-numeric count values, or status
+    values that are neither numeric nor a known non-numeric flag (see
+    `_KNOWN_NON_NUMERIC_STATUS_VALUES`).
     """
 
 
@@ -305,16 +315,22 @@ def parse_station_csv(csv_text: str, station_id: str) -> pd.DataFrame:
             messages and to tag the returned rows).
 
     Returns:
-        DataFrame with columns ``station_id``, ``datetime`` (datetime64[ns])
-        and one nullable-integer (``Int64``) column per source count/status
-        column, sorted by ``datetime`` with no duplicate timestamps.
+        DataFrame with columns ``station_id``, ``datetime`` (datetime64[ns]),
+        one nullable-integer (``Int64``) column per source count column, and
+        one column per source status column left as-is (status values are
+        mostly numeric codes but may be a known non-numeric flag such as
+        ``"modified"`` for a manually-corrected reading - see
+        `_KNOWN_NON_NUMERIC_STATUS_VALUES`; status columns are metadata, not
+        modeled, so they aren't coerced to a numeric dtype). Sorted by
+        ``datetime`` with no duplicate timestamps.
 
     Raises:
         BikeCountDataError: if the CSV cannot be parsed, is missing the
             ``Datetime`` column, has an unrecognized column, has count
             columns without a matching status column (or vice versa),
-            contains unparsable or duplicate timestamps, or contains
-            non-numeric count/status values.
+            contains unparsable or duplicate timestamps, contains
+            non-numeric count values, or contains a status value that is
+            neither numeric nor a known non-numeric flag.
     """
     try:
         df = pd.read_csv(io.StringIO(csv_text))
@@ -373,17 +389,32 @@ def parse_station_csv(csv_text: str, station_id: str) -> pd.DataFrame:
             f"Station {station_id!r} CSV has null timestamps after parsing."
         )
 
-    value_columns = list(count_columns.values()) + list(status_columns.values())
-    numeric = df[value_columns].apply(pd.to_numeric, errors="coerce")
-    invalid_mask = df[value_columns].notna() & numeric.isna()
-    if invalid_mask.to_numpy().any():
-        bad_columns = invalid_mask.columns[invalid_mask.any()].tolist()
+    count_value_columns = list(count_columns.values())
+    numeric_counts = df[count_value_columns].apply(pd.to_numeric, errors="coerce")
+    invalid_counts = df[count_value_columns].notna() & numeric_counts.isna()
+    if invalid_counts.to_numpy().any():
+        bad_columns = invalid_counts.columns[invalid_counts.any()].tolist()
         raise BikeCountDataError(
             f"Station {station_id!r} CSV has non-numeric values in columns: "
             f"{bad_columns}."
         )
 
-    result = numeric.astype("Int64")
+    status_value_columns = list(status_columns.values())
+    numeric_status = df[status_value_columns].apply(pd.to_numeric, errors="coerce")
+    is_known_flag = df[status_value_columns].isin(_KNOWN_NON_NUMERIC_STATUS_VALUES)
+    invalid_status = (
+        df[status_value_columns].notna() & numeric_status.isna() & ~is_known_flag
+    )
+    if invalid_status.to_numpy().any():
+        bad_columns = invalid_status.columns[invalid_status.any()].tolist()
+        raise BikeCountDataError(
+            f"Station {station_id!r} CSV has unrecognized (non-numeric, "
+            f"non-flag) values in status columns: {bad_columns}."
+        )
+
+    result = numeric_counts.astype("Int64")
+    for column in status_value_columns:
+        result[column] = df[column]
     result.insert(0, "datetime", datetimes)
     result.insert(0, "station_id", station_id)
 

@@ -18,12 +18,21 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-st.set_page_config(page_title="Münster Bike Traffic Forecast", page_icon="🚲", layout="wide")
+st.set_page_config(
+    page_title="Münster Bike Traffic Forecast", page_icon="🚲", layout="wide"
+)
 
 PAGES_DIR = PROJECT_ROOT / "pages"
 pages = [
-    st.Page(str(PAGES_DIR / "station_forecast.py"), title="Station forecast", icon="📍", default=True),
-    st.Page(str(PAGES_DIR / "station_comparison.py"), title="Station comparison", icon="📊"),
+    st.Page(
+        str(PAGES_DIR / "station_forecast.py"),
+        title="Station forecast",
+        icon="📍",
+        default=True,
+    ),
+    st.Page(
+        str(PAGES_DIR / "station_comparison.py"), title="Station comparison", icon="📊"
+    ),
     st.Page(str(PAGES_DIR / "city_map.py"), title="City map", icon="🗺️"),
 ]
 st.navigation(pages).run()

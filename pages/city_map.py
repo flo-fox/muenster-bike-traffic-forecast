@@ -10,6 +10,7 @@ from dashboard_common import (
     FETCH_ERRORS,
     build_fleet_snapshot,
     load_station_locations,
+    render_dropped_stations_warning,
     render_footer,
     render_station_map,
 )
@@ -25,14 +26,16 @@ except FileNotFoundError:
     st.stop()
 
 try:
-    snapshot = build_fleet_snapshot(as_of)
+    fleet_snapshot = build_fleet_snapshot(as_of)
 except FETCH_ERRORS as exc:
     st.error(f"Could not build the city-wide snapshot: {exc}")
     st.stop()
 
-if snapshot.empty:
+render_dropped_stations_warning(fleet_snapshot)
+
+if fleet_snapshot.data.empty:
     st.info("No station currently has recent enough data to show.")
 else:
-    st.plotly_chart(render_station_map(snapshot, locations), width="stretch")
+    st.plotly_chart(render_station_map(fleet_snapshot.data, locations), width="stretch")
 
 render_footer()

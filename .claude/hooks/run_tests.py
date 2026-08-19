@@ -10,6 +10,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Must stay below the hook's own "timeout" in .claude/settings.json (60s):
+# that outer limit kills this whole process, so a subprocess timeout at or
+# above it can never actually fire - this leaves a safety margin so the
+# graceful "pytest timed out" report below has a chance to run and be
+# reported before the harness's own hard kill would otherwise pre-empt it.
+PYTEST_TIMEOUT_SECONDS = 50
+
 
 def _resolve_python(repo_root: Path) -> str:
     """Return the project's venv interpreter, or fall back to this one.
@@ -66,13 +73,13 @@ def main() -> None:
             cwd=repo_root,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=PYTEST_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired:
         _report(
-            "pytest timed out after 120s - see details",
-            "The full test suite did not finish within 120s after this "
-            "edit. It may be hanging, or has grown too slow to run on "
+            f"pytest timed out after {PYTEST_TIMEOUT_SECONDS}s - see details",
+            f"The full test suite did not finish within {PYTEST_TIMEOUT_SECONDS}s "
+            "after this edit. It may be hanging, or has grown too slow to run on "
             "every edit.",
         )
         return
