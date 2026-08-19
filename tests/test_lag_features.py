@@ -92,6 +92,17 @@ def test_add_lag_feature_raises_on_missing_column() -> None:
         add_lag_feature(df, lag=pd.Timedelta(minutes=15), feature_col="lag_15m")
 
 
+def test_add_lag_feature_returns_valid_empty_result_on_empty_input() -> None:
+    # pd.MultiIndex.from_tuples([]) raises TypeError on an empty key list -
+    # this must not propagate as a bare, uninformative exception.
+    df = pd.DataFrame({"station_id": [], "datetime": [], "total_count": []})
+
+    out = add_lag_feature(df, lag=pd.Timedelta(minutes=15), feature_col="lag_15m")
+
+    assert out.empty
+    assert "lag_15m" in out.columns
+
+
 # ---------------------------------------------------------------------------
 # add_rolling_feature
 # ---------------------------------------------------------------------------

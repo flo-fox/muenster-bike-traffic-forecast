@@ -102,6 +102,35 @@ def _read_capped(response: requests.Response, url: str, max_bytes: int) -> bytes
     return b"".join(chunks)
 
 
+_MAX_STATION_NAME_LENGTH: Final[int] = 200
+
+
+def _sanitize_station_name(name: str) -> str:
+    """Strips control characters from an untrusted station name, caps length.
+
+    `name` comes from the source repo's ``site_min.json`` (untrusted
+    input, like ``directory``/``station_id``) but unlike `station_id` it
+    is later interpolated directly into Streamlit UI text (`st.error`/
+    `st.warning`/`st.info` render their argument as Markdown) and Plotly
+    hover text/tick labels across the dashboard - so this is genuine
+    free text (real place names include spaces, punctuation, umlauts)
+    and isn't restricted to `_validate_station_id`'s narrow filename-safe
+    charset. It only strips characters with no legitimate display use
+    (control/non-printable characters, which have no place in a station
+    name and could otherwise smuggle stray formatting) and bounds the
+    length, leaving ordinary Unicode text untouched.
+
+    Args:
+        name: Raw station name.
+
+    Returns:
+        `name` with non-printable characters removed, truncated to
+        `_MAX_STATION_NAME_LENGTH` characters.
+    """
+    cleaned = "".join(char for char in name if char.isprintable())
+    return cleaned[:_MAX_STATION_NAME_LENGTH]
+
+
 def _validate_station_id(station_id: str) -> None:
     """Reject station ids that are unsafe to use as a filename component.
 
@@ -268,7 +297,7 @@ def parse_station_index(raw: object) -> list[Station]:
         try:
             station = Station(
                 station_id=station_id,
-                name=str(entry["name"]),
+                name=_sanitize_station_name(str(entry["name"])),
                 start_year=start_year,
                 channels=channels,
             )
@@ -589,12 +618,22 @@ def summarize_coverage(
     """
     missing = find_missing_intervals(df, freq_minutes=freq_minutes)
     n_records = int(df["datetime"].nunique())
+    # Derived the same way `find_missing_intervals` computes its own
+    # `expected` grid, rather than `n_records + len(missing)`: that
+    # shortcut overcounts whenever a present timestamp falls off the
+    # 15-minute grid (an off-grid row is counted once via `n_records`
+    # *and* implicitly again by not being one of the missing on-grid
+    # slots), so it isn't equivalent to "how many on-grid slots exist in
+    # this range."
+    expected = pd.date_range(
+        start=df["datetime"].min(), end=df["datetime"].max(), freq=f"{freq_minutes}min"
+    )
     return {
         "station_id": station_id,
         "first_timestamp": df["datetime"].min(),
         "last_timestamp": df["datetime"].max(),
         "n_records": n_records,
-        "n_expected": n_records + len(missing),
+        "n_expected": len(expected),
         "n_missing": int(len(missing)),
         "missing_timestamps": list(missing),
     }
