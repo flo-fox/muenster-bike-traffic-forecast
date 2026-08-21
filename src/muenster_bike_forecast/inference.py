@@ -190,7 +190,7 @@ def assemble_feature_history(
     joined = join_station_weather(
         localized, weather_wide_df, tolerance=WEATHER_JOIN_TOLERANCE
     )
-    total_count = compute_total_count(joined)
+    total_count = compute_total_count(joined, working["station_id"].iloc[0])
 
     weather_columns = [
         column

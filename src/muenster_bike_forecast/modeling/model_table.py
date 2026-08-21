@@ -5,16 +5,20 @@ This module turns the per-station joined bike-count/weather CSVs (see
 24h-ahead traffic forecasting, plus a seasonal-naive baseline to compare
 future models against. Responsibilities, kept as pure functions:
 
-1. **Channel coalescing + total-count summation.** The source repo has, for
-   some stations, renamed a channel's description mid-history while keeping
-   its numeric channel id, which shows up in the joined CSVs as two
+1. **Channel coalescing + combined-channel selection.** The source repo has,
+   for some stations, renamed a channel's description mid-history while
+   keeping its numeric channel id, which shows up in the joined CSVs as two
    differently-named columns sharing the same leading channel id (e.g.
    ``"101020113 (FR stdteinwärts)"`` and
    ``"101020113 (FR stadteinwärts)"``  the first is a typo, fixed
-   later). Naively summing every count-shaped column would double-count
-   that channel. `compute_total_count` groups count columns by channel id,
-   coalesces same-id columns into one series, and only then sums across
-   distinct channel ids.
+   later). Separately, every station also publishes a "combined" channel
+   (numeric id equal to the station's own `station_id`) alongside two or
+   more "directional" sub-channels - the combined channel already equals
+   the sum of the directional ones (confirmed across all 23 stations via
+   `combined_channel_matches_directional_sum`), so summing every
+   count-shaped column would double-count. `compute_total_count` groups
+   count columns by channel id, coalesces same-id columns into one series,
+   then returns only the combined channel's (coalesced) series.
 2. **Exact-timestamp 24h-ahead target construction.** `add_forecast_target`
    looks up, for each ``(station, t)`` row, the `total_count` value at the
    row whose timestamp is exactly ``t + horizon`` for the same station  a
@@ -138,41 +142,56 @@ def coalesce_channel_columns(df: pd.DataFrame, columns: Sequence[str]) -> pd.Ser
     return coalesced
 
 
-def compute_total_count(df: pd.DataFrame) -> pd.Series:
-    """Computes total bike count per row from a station's count columns.
+def compute_total_count(df: pd.DataFrame, station_id: int | str) -> pd.Series:
+    """Computes total bike count per row from a station's combined channel.
 
-    Identifies distinct channels via `identify_channel_count_columns`,
-    coalesces any duplicate same-id columns (see module docstring), then
-    sums across distinct channels with ``min_count=1`` so a row where every
-    channel is null sums to ``NaN`` rather than a fabricated 0  missing
-    data must never silently become "zero traffic".
+    Every station in this dataset publishes one "combined" count channel
+    (numeric channel id equal to the station's own `station_id`) alongside
+    two or more "directional" sub-channels (e.g. `stadteinwärts`/
+    `stadtauswärts`) - the combined channel already equals the sum of the
+    directional ones (confirmed 100% across all 23 stations via
+    `combined_channel_matches_directional_sum`), so this returns that
+    combined channel's value directly rather than summing every channel
+    id found, which would double-count. Coalesces any duplicate same-id
+    columns for the combined channel (see module docstring) via
+    `coalesce_channel_columns`, so a row where every duplicate is null
+    stays `NaN` rather than becoming a fabricated 0 - missing data must
+    never silently become "zero traffic".
 
     Args:
         df: One station's rows, containing one or more
             ``"<channel_id> (<description>)"`` count columns (e.g. as
             loaded from ``data/raw/joined/<station_id>.csv``).
+        station_id: The station's own id - identifies which channel
+            column is "combined" (the one whose numeric id matches this
+            value, compared as a string).
 
     Returns:
         Series of total counts, aligned to `df`'s index, dtype float
         (nullable via `NaN`).
 
     Raises:
-        ModelTableError: if `df` has no recognizable count columns, or a
-            duplicate-channel-id conflict is found (see
+        ModelTableError: if `df` has no recognizable count columns, no
+            channel matches `station_id`, or a duplicate-channel-id
+            conflict is found for the combined channel (see
             `coalesce_channel_columns`).
     """
     channel_columns = identify_channel_count_columns(list(df.columns))
     if not channel_columns:
         raise ModelTableError("DataFrame has no recognizable channel count columns.")
 
-    coalesced = pd.DataFrame(
-        {
-            channel_id: coalesce_channel_columns(df, columns)
-            for channel_id, columns in channel_columns.items()
-        },
-        index=df.index,
-    )
-    return coalesced.sum(axis=1, min_count=1)
+    combined_id = str(station_id)
+    if combined_id not in channel_columns:
+        raise ModelTableError(
+            f"No channel column found with id matching station_id {station_id!r}."
+        )
+    # Cast explicitly: coalesce_channel_columns preserves the input
+    # column's dtype, which is only float when the source data already
+    # has a null somewhere in it (as real CSVs almost always do, but a
+    # small/complete slice - a live-inference window with no gaps, a
+    # test fixture - would otherwise silently come back int64, breaking
+    # the float/nullable-via-NaN contract this function documents.
+    return coalesce_channel_columns(df, channel_columns[combined_id]).astype(float)
 
 
 def combined_channel_matches_directional_sum(
