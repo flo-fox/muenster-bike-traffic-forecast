@@ -750,7 +750,13 @@ def load_station_data(path: Path) -> pd.DataFrame:
     Raises:
         BikeCountDataError: if the file is missing the ``datetime`` column.
     """
-    df = pd.read_csv(path)
+    # low_memory=False reads the file in one pass instead of chunks, avoiding
+    # a spurious DtypeWarning on older-generation "-status" columns that mix
+    # literal `0` and `"modified"` string values - a real, benign upstream
+    # status flag, not a schema problem, but the chunked-inference warning
+    # text embeds the local file path (see CLAUDE.md's no-personal-data
+    # convention) if left uncaught in a notebook cell.
+    df = pd.read_csv(path, low_memory=False)
     if "datetime" not in df.columns:
         raise BikeCountDataError(f"{path} is missing the 'datetime' column.")
     df["datetime"] = pd.to_datetime(df["datetime"])
