@@ -21,8 +21,9 @@ from dashboard_common import (
 
 st.title("📊 Station comparison")
 st.caption(
-    "Cross-sectional comparison: how every station's current reading and "
-    "24h-ahead forecast compare to each other right now (not a time series)."
+    "Cross-sectional comparison: how every station's actual traffic over "
+    "the last 24h and predicted traffic over the next 24h compare to each "
+    "other right now (not a time series)."
 )
 
 as_of = date.today()
@@ -39,15 +40,15 @@ if snapshot.empty:
     st.info("No station currently has recent enough data to compare.")
     st.stop()
 
-ranked = snapshot.sort_values("forecast_value", ascending=True)
+ranked = snapshot.sort_values("predicted_total_24h", ascending=True)
 labels = ranked["name"] + " (" + ranked["station_id"] + ")"
 
 fig = go.Figure()
 fig.add_trace(
     go.Bar(
         y=labels,
-        x=ranked["current_total_count"],
-        name="Current (per 15 min)",
+        x=ranked["actual_total_24h"],
+        name="Actual (last 24h)",
         orientation="h",
         marker=dict(color="#4C78A8"),
     )
@@ -55,15 +56,15 @@ fig.add_trace(
 fig.add_trace(
     go.Bar(
         y=labels,
-        x=ranked["forecast_value"],
-        name="Forecast +24h (per 15 min)",
+        x=ranked["predicted_total_24h"],
+        name="Predicted (next 24h)",
         orientation="h",
         marker=dict(color="#E45756"),
     )
 )
 fig.update_layout(
     barmode="group",
-    xaxis_title="Bike count (per 15 min)",
+    xaxis_title="Bike count (rolling 24h total)",
     height=max(500, 28 * len(ranked)),
     legend=dict(orientation="h", yanchor="bottom", y=1.02),
     margin=dict(t=60, b=60, l=10, r=10),
@@ -80,20 +81,20 @@ fig.add_annotation(
 st.plotly_chart(fig, width="stretch")
 
 st.dataframe(
-    snapshot.sort_values("forecast_value", ascending=False)[
+    snapshot.sort_values("predicted_total_24h", ascending=False)[
         [
             "name",
             "station_id",
-            "current_total_count",
-            "forecast_value",
+            "actual_total_24h",
+            "predicted_total_24h",
             "current_datetime",
         ]
     ].rename(
         columns={
             "name": "Station",
             "station_id": "ID",
-            "current_total_count": "Current",
-            "forecast_value": "Forecast +24h",
+            "actual_total_24h": "Actual (last 24h)",
+            "predicted_total_24h": "Predicted (next 24h)",
             "current_datetime": "As of",
         }
     ),

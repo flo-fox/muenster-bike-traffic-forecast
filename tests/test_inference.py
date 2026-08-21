@@ -18,12 +18,15 @@ import pytest
 from muenster_bike_forecast.data.join import localize_bike_timestamps
 from muenster_bike_forecast.inference import (
     FEATURE_COLS,
+    ForecastSummary,
     InferenceError,
     assemble_feature_history,
     latest_feature_row,
     months_needed,
     predict_24h_ahead,
     predict_forecast_curve,
+    select_window_rows,
+    summarize_forecast_curve,
 )
 
 STATION_ID = 12345
@@ -317,6 +320,109 @@ def test_predict_forecast_curve_raises_on_missing_columns() -> None:
         predict_forecast_curve(
             _SequentialStubModel(), history, STATION_ID, history["datetime"].iloc[-1]
         )
+
+
+# ---------------------------------------------------------------------------
+# select_window_rows
+# ---------------------------------------------------------------------------
+
+
+def _window_history() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "station_id": [STATION_ID] * 5,
+            "datetime": pd.to_datetime(
+                [
+                    "2024-06-01 00:00",
+                    "2024-06-01 01:00",
+                    "2024-06-01 02:00",
+                    "2024-06-01 03:00",
+                    "2024-06-01 04:00",
+                ]
+            ),
+            "total_count": [1.0, 2.0, 3.0, 4.0, 5.0],
+        }
+    )
+
+
+def test_select_window_rows_returns_rows_strictly_after_start_through_end() -> None:
+    history = _window_history()
+    window_end = pd.Timestamp("2024-06-01 03:00")
+
+    rows = select_window_rows(
+        history, STATION_ID, window_end, window=pd.Timedelta(hours=2)
+    )
+
+    # (01:00, 03:00] -> the 02:00 and 03:00 rows only.
+    assert list(rows["total_count"]) == [3.0, 4.0]
+
+
+def test_select_window_rows_defaults_to_24h_window() -> None:
+    history = _window_history()
+    window_end = pd.Timestamp("2024-06-01 04:00")
+
+    rows = select_window_rows(history, STATION_ID, window_end)
+
+    assert list(rows["total_count"]) == [1.0, 2.0, 3.0, 4.0, 5.0]
+
+
+def test_select_window_rows_filters_by_station() -> None:
+    history = pd.DataFrame(
+        {
+            "station_id": [STATION_ID, 99999],
+            "datetime": pd.to_datetime(["2024-06-01 01:00", "2024-06-01 01:00"]),
+            "total_count": [1.0, 2.0],
+        }
+    )
+
+    rows = select_window_rows(history, STATION_ID, pd.Timestamp("2024-06-01 02:00"))
+
+    assert list(rows["total_count"]) == [1.0]
+
+
+# ---------------------------------------------------------------------------
+# summarize_forecast_curve
+# ---------------------------------------------------------------------------
+
+
+def _sample_curve() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "source_datetime": pd.to_datetime(
+                ["2024-06-01 00:00", "2024-06-01 01:00", "2024-06-01 02:00"]
+            ),
+            "target_datetime": pd.to_datetime(
+                ["2024-06-02 00:00", "2024-06-02 01:00", "2024-06-02 02:00"]
+            ),
+            "predicted_total_count": [10.0, 25.0, 15.0],
+        }
+    )
+
+
+def test_summarize_forecast_curve_computes_total_and_peak() -> None:
+    summary = summarize_forecast_curve(_sample_curve())
+
+    assert isinstance(summary, ForecastSummary)
+    assert summary.total_predicted_count == pytest.approx(50.0)
+    assert summary.peak_datetime == pd.Timestamp("2024-06-02 01:00")
+    assert summary.peak_value == pytest.approx(25.0)
+
+
+def test_summarize_forecast_curve_breaks_ties_by_earliest_peak() -> None:
+    curve = _sample_curve()
+    curve.loc[2, "predicted_total_count"] = 25.0  # tie with row 1 (index 1)
+
+    summary = summarize_forecast_curve(curve)
+
+    assert summary.peak_datetime == pd.Timestamp("2024-06-02 01:00")
+
+
+def test_summarize_forecast_curve_raises_on_empty_curve() -> None:
+    empty = pd.DataFrame(
+        columns=["source_datetime", "target_datetime", "predicted_total_count"]
+    )
+    with pytest.raises(InferenceError):
+        summarize_forecast_curve(empty)
 
 
 # ---------------------------------------------------------------------------

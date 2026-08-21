@@ -18,6 +18,7 @@ different feature set, update both places.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date
 from typing import Final
 
@@ -321,6 +322,95 @@ def predict_forecast_curve(
         }
     )
     return curve.sort_values("target_datetime").reset_index(drop=True)
+
+
+def select_window_rows(
+    feature_history_df: pd.DataFrame,
+    station_id: int | str,
+    window_end: pd.Timestamp,
+    window: pd.Timedelta = pd.Timedelta(hours=24),
+) -> pd.DataFrame:
+    """Selects one station's rows within ``(window_end - window, window_end]``.
+
+    Pure row-selection helper shared by callers that need "actual data over
+    a rolling window ending at some timestamp" - e.g. summing actual
+    `total_count`, or aggregating weather/calendar context for that window.
+
+    Args:
+        feature_history_df: As returned by `assemble_feature_history`.
+        station_id: Station to select (matched after casting to `int64`,
+            consistent with `assemble_feature_history`).
+        window_end: End of the window (inclusive).
+        window: How far back the window reaches (exclusive start).
+
+    Returns:
+        The matching rows, in `feature_history_df`'s original row order.
+    """
+    station_rows = feature_history_df.loc[
+        feature_history_df["station_id"] == int(station_id)
+    ]
+    return station_rows.loc[
+        (station_rows["datetime"] > window_end - window)
+        & (station_rows["datetime"] <= window_end)
+    ]
+
+
+@dataclass(frozen=True)
+class ForecastSummary:
+    """Rolling-window headline summary of a forecast curve.
+
+    Pure post-hoc aggregation over an already-computed `predict_forecast_curve`
+    result - no new modeling, no retraining. `total_predicted_count` is a
+    rolling-window sum anchored to whatever `current_datetime` the curve was
+    built from, not a calendar-day total - callers must label it as such.
+
+    Attributes:
+        total_predicted_count: Sum of `predicted_total_count` across every
+            row in the curve. Undercounts slightly if the source window has
+            gaps (missing 15-min readings) - accepted, consistent with how
+            lag/rolling features already go null near data gaps elsewhere
+            in this project.
+        peak_datetime: `target_datetime` of the row with the highest
+            `predicted_total_count`. Ties keep the earliest such timestamp
+            (`Series.idxmax` behavior).
+        peak_value: `predicted_total_count` at `peak_datetime`.
+    """
+
+    total_predicted_count: float
+    peak_datetime: pd.Timestamp
+    peak_value: float
+
+
+def summarize_forecast_curve(forecast_curve: pd.DataFrame) -> ForecastSummary:
+    """Aggregates a forecast curve into a rolling-window total + peak.
+
+    Args:
+        forecast_curve: As returned by `predict_forecast_curve` - needs
+            `target_datetime` and `predicted_total_count` columns and at
+            least one row.
+
+    Returns:
+        The curve's `ForecastSummary`.
+
+    Raises:
+        InferenceError: if `forecast_curve` is empty. Unreachable via either
+            of this project's current callers in practice
+            (`predict_forecast_curve` already raises `InferenceError` before
+            returning an empty curve) - this function validates its own
+            input anyway since it's a standalone pure transform other
+            callers/tests can call directly.
+    """
+    if forecast_curve.empty:
+        raise InferenceError(
+            "forecast_curve is empty; cannot summarize an empty forecast curve."
+        )
+    peak_idx = forecast_curve["predicted_total_count"].idxmax()
+    peak_row = forecast_curve.loc[peak_idx]
+    return ForecastSummary(
+        total_predicted_count=float(forecast_curve["predicted_total_count"].sum()),
+        peak_datetime=peak_row["target_datetime"],
+        peak_value=float(peak_row["predicted_total_count"]),
+    )
 
 
 def predict_24h_ahead(model: object, feature_row: pd.Series) -> float:

@@ -21,8 +21,15 @@ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8501
 ```
 
 `200` means it's already running — skip straight to "Hand off to the
-user" below. Anything else (connection refused, `000`) means it needs
-launching.
+user" below, **unless** `dashboard_common.py` or any `pages/*.py` file
+has been edited since that server was launched. Confirmed 2026-08-21: a
+running server showed a stale-code `KeyError` after such edits, and the
+Streamlit app's own "Clear cache" menu action did *not* fix it — only a
+full stop-and-relaunch did. Streamlit's hot-reload/cache-invalidation
+doesn't reliably catch every change to a shared module imported by
+multiple pages, especially across several edits in one session. When in
+doubt after editing dashboard code, restart rather than reuse. Anything
+other than `200` (connection refused, `000`) means it needs launching.
 
 ## Launch it
 

@@ -28,6 +28,7 @@ from dashboard_common import (
     render_forecast_chart,
     render_station_map,
 )
+from muenster_bike_forecast import inference
 from muenster_bike_forecast.data.bike_counts import BikeCountDataError, Station
 
 # ---------------------------------------------------------------------------
@@ -138,8 +139,8 @@ def _sample_snapshot_and_locations() -> tuple[pd.DataFrame, pd.DataFrame]:
         {
             "station_id": ["100053305", "300037936", "300038855"],
             "name": ["Kanalpromenade 5", "Kanalpromenade 6", "Bismarckallee"],
-            "current_total_count": [5, 8, 20],
-            "forecast_value": [6, 9, 25],
+            "actual_total_24h": [5, 8, 20],
+            "predicted_total_24h": [6, 9, 25],
         }
     )
     locations = pd.DataFrame(
@@ -206,7 +207,12 @@ def test_build_fleet_snapshot_reports_dropped_stations(monkeypatch) -> None:
             "current_row": pd.Series(
                 {"total_count": 5.0, "datetime": pd.Timestamp(as_of)}
             ),
-            "forecast_value": 6.0,
+            "actual_total_24h": 120.0,
+            "forecast_summary": inference.ForecastSummary(
+                total_predicted_count=150.0,
+                peak_datetime=pd.Timestamp(as_of),
+                peak_value=20.0,
+            ),
         }
 
     monkeypatch.setattr(dashboard_common, "build_forecast", fake_build_forecast)
@@ -230,7 +236,12 @@ def test_build_fleet_snapshot_has_no_dropped_stations_when_all_succeed(
             "current_row": pd.Series(
                 {"total_count": 5.0, "datetime": pd.Timestamp(as_of)}
             ),
-            "forecast_value": 6.0,
+            "actual_total_24h": 120.0,
+            "forecast_summary": inference.ForecastSummary(
+                total_predicted_count=150.0,
+                peak_datetime=pd.Timestamp(as_of),
+                peak_value=20.0,
+            ),
         }
 
     monkeypatch.setattr(dashboard_common, "build_forecast", fake_build_forecast)

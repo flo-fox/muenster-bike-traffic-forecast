@@ -73,10 +73,10 @@ repo.
 A scheduled GitHub Actions workflow (`.github/workflows/daily_forecast_email.yml`,
 ~09:00 Münster local time) runs `scripts/send_daily_email.py`, which:
 
-- Checks every station's forecast from ~24h ago against today's actual
-  traffic (recomputed from the same live data the dashboard uses — no
-  forecast history is stored anywhere) and shows today's fresh 24h-ahead
-  forecast too.
+- Checks every station's predicted traffic *total* over the last 24h
+  against the actual total over that same window (recomputed from the
+  same live data the dashboard uses — no forecast history is stored
+  anywhere) and shows today's fresh rolling-next-24h total forecast too.
 - Asks Claude for a short, grounded explanation of the biggest deviations
   (default: top 3 by absolute error).
 - Emails the result via Gmail, as an HTML report with a plain-text fallback.

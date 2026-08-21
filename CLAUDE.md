@@ -230,19 +230,60 @@ Before treating a step as done, check it from three angles:
   (verified via its own commit history) but has an active ~3-week gap as of
   this session — the dashboard surfaces this as a visible staleness
   warning rather than silently presenting stale data as current.
-- **Open question for next session**: given the source only updates about
-  daily (per above), does a 15-minute-resolution forecast curve overstate
-  the freshness/precision actually available? Discussed 2026-07-27:
-  leaning towards keeping the *model* at 15-minute resolution (that's the
-  target's real grain, and what the continuous-curve feature depends on)
-  but adding a **daily-aggregated headline number** (e.g. total predicted
-  traffic for the next calendar day, maybe a peak-hour callout) as the
-  primary display, since that better matches how often the underlying data
-  actually changes — a pure aggregation of predictions already computed,
-  no retraining needed. Tradeoff not yet resolved: a daily aggregate is
-  more honest about freshness but loses the intraday shape (e.g. "busier
-  morning rush than usual") the current curve shows. Not implemented yet —
-  pick up here.
+- **Daily-vs-15-min display question resolved (2026-08-21)**: the
+  2026-07-27 open question (given the source only updates about daily,
+  does a 15-minute-resolution forecast overstate the freshness/precision
+  actually available?) is now implemented on both the dashboard and the
+  daily email, via a new shared pure-aggregation primitive
+  (`inference.summarize_forecast_curve`/`ForecastSummary`, built entirely
+  from the already-existing `inference.predict_forecast_curve` - no
+  retraining, no new modeling):
+  - **Dashboard** (`pages/station_forecast.py`): the primary display is
+    now "Predicted traffic, next 24h: `<sum>`" + a weekday-qualified
+    "Peak expected: `<day HH:MM>`" callout, anchoring
+    `predict_forecast_curve` at "now" and aggregating. Deliberately a
+    **rolling** next-24h window, not a calendar-day ("tomorrow") total -
+    chosen specifically to avoid the extra curve-construction complexity a
+    true calendar-day alignment would need. The old single-point "Forecast
+    in 24h" metric is kept as demoted "Point-in-time detail" below a
+    divider, not removed. The 15-minute-grid forecast curve chart is
+    unchanged (still the right resolution for the model's real target
+    grain), just no longer the first thing shown.
+  - **Daily email** (`daily_report.py`): the backward-looking accuracy
+    check moved from "yesterday's point prediction vs. today's single
+    actual reading" to "yesterday's predicted total for the last 24h vs.
+    the actual total over that same window" - reusing
+    `predict_forecast_curve` anchored at `now - 24h` (which naturally
+    yields predictions targeting exactly the window ending "now"), summed
+    and compared against the sum of actual readings in that window. A
+    single 15-minute actual reading is noisy (sensor blips, one
+    unlucky/lucky interval) and represents the model's real day-ahead
+    skill worse than a window sum does. The forward-looking "Forecast
+    +24h" column changed the same way, reusing `ForecastSummary`, but
+    **without** the peak-time callout (a 23-station daily digest table is
+    a worse fit for a per-station peak-time than the dashboard's
+    single-station live view). This whole redesign also quietly retired
+    the old `select_row_near`/`YESTERDAY_ROW_TOLERANCE`/timing-gap
+    machinery - summing over a window sidesteps "is there a reading at
+    exactly the right instant" entirely. **Note**: the email's new
+    daily-total accuracy metric is a genuinely different, coarser metric
+    than the model's own published single-point 24h-ahead MAE/RMSE (see
+    notebooks 08-17) - not directly comparable to those numbers, and the
+    email's own closing disclaimer now says so.
+  - **Station comparison and City map** (`pages/station_comparison.py`,
+    `pages/city_map.py` via `dashboard_common.render_station_map`): same
+    "Actual (last 24h)" / "Predicted (next 24h)" framing as the email,
+    replacing the old `current_total_count`/`forecast_value` 15-minute
+    point fields in `build_fleet_snapshot`'s per-station rows. Needed a
+    new small shared primitive, `inference.select_window_rows` (pure row
+    selection for "a station's rows within a rolling window ending at some
+    timestamp"), factored out of `daily_report.build_station_report`'s
+    previously-inline window logic and reused by both
+    `dashboard_common.build_forecast` (for `actual_total_24h`) and
+    `daily_report.py` (behavior-preserving refactor, no output change).
+    No demoted secondary section on these two pages, unlike the station-
+    forecast page - a 23-station bar chart/table/map is a worse fit for
+    carrying both framings than a single-station detail page.
 - **`chronological_split` gained a default 24h embargo (2026-08-17)**:
   `modeling/model_table.py`'s `chronological_split` previously put every
   row strictly before the cutoff into train, but a row's *label* (added
