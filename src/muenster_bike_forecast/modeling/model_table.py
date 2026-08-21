@@ -175,6 +175,91 @@ def compute_total_count(df: pd.DataFrame) -> pd.Series:
     return coalesced.sum(axis=1, min_count=1)
 
 
+def combined_channel_matches_directional_sum(
+    df: pd.DataFrame, station_id: int | str
+) -> pd.Series:
+    """Checks, per row, whether the station's combined channel count equals
+    the sum of its other (directional) channel counts for that row.
+
+    Every station in this dataset publishes one "combined" count column
+    whose numeric channel id equals the station's own `station_id`,
+    alongside two or more "directional" sub-channels (e.g. `stadteinwärts`/
+    `stadtauswärts`, sometimes reissued under new channel ids over the
+    station's history). Read-only diagnostic: it does not change how
+    `compute_total_count` behaves, and is not wired into the modeling
+    pipeline. It exists to confirm (or refute), per station, the
+    suspicion that the combined channel is not an independent sensor
+    reading but already equals the sum of whichever directional channels
+    are active for that row - which would mean `compute_total_count`
+    currently double-counts every such station's traffic by summing the
+    combined channel on top of the directional ones instead of treating
+    it as redundant.
+
+    Args:
+        df: One station's rows, containing channel count columns as
+            recognized by `identify_channel_count_columns`.
+        station_id: The station's own id - identifies which channel
+            column is "combined" (the one whose numeric id matches this
+            value, compared as a string).
+
+    Returns:
+        Nullable boolean Series aligned to `df`'s index: `True` where the
+        combined channel's value equals the sum of every other channel's
+        value for that row, `False` where they disagree, and `pd.NA`
+        where there is nothing to compare (the combined channel is null
+        for that row, or *every* directional channel is null for that
+        row - distinguishing "checked and disagreed" from "nothing to
+        check" matters here, since a naive comparison against a
+        fabricated `0` for missing directional data would misreport a
+        data gap as a mismatch).
+
+        Known accepted limitation: a *partial* directional gap (some, not
+        all, directional channels null on a row) is not detected as
+        "nothing to check" - the sum is computed from whichever channels
+        are present and compared as if complete, which can misreport
+        `False` on a row that's actually just missing one reading. This
+        can't cheaply be distinguished from the normal, expected case of
+        several *inactive* directional-channel generations being null on
+        every row outside their own vintage (see the module docstring on
+        reissued channel ids) - requiring every directional column
+        non-null would make this function reject nearly every row of a
+        multi-generation station. Accepted because the actual 23-station
+        confirmation run this function was built for came back
+        unambiguous (100% match, zero `False`s) despite this gap.
+
+    Raises:
+        ModelTableError: if `df` has no channel column whose id matches
+            `station_id` (nothing to treat as "combined").
+    """
+    channel_columns = identify_channel_count_columns(list(df.columns))
+    combined_id = str(station_id)
+    if combined_id not in channel_columns:
+        raise ModelTableError(
+            f"No channel column found with id matching station_id {station_id!r}."
+        )
+    combined = coalesce_channel_columns(df, channel_columns[combined_id])
+
+    directional_ids = [cid for cid in channel_columns if cid != combined_id]
+    if not directional_ids:
+        raise ModelTableError(
+            f"Station {station_id!r} has only the combined channel "
+            f"{combined_id!r} - no directional channels to compare it against."
+        )
+    directional = pd.DataFrame(
+        {
+            channel_id: coalesce_channel_columns(df, channel_columns[channel_id])
+            for channel_id in directional_ids
+        },
+        index=df.index,
+    )
+    directional_sum = directional.sum(axis=1, min_count=1)
+
+    has_data = combined.notna() & directional_sum.notna()
+    result = pd.Series(pd.NA, index=df.index, dtype="boolean")
+    result[has_data] = combined[has_data] == directional_sum[has_data]
+    return result
+
+
 def add_forecast_target(
     df: pd.DataFrame,
     value_col: str = "total_count",

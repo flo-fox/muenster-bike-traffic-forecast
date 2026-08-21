@@ -21,6 +21,7 @@ from muenster_bike_forecast.modeling.model_table import (
     add_forecast_target,
     chronological_split,
     coalesce_channel_columns,
+    combined_channel_matches_directional_sum,
     compute_baseline_metrics,
     compute_total_count,
     identify_channel_count_columns,
@@ -151,6 +152,97 @@ def test_compute_total_count_raises_when_no_count_columns() -> None:
     df = pd.DataFrame({"station_id": ["S1"], "datetime": [pd.Timestamp("2024-01-01")]})
     with pytest.raises(ModelTableError):
         compute_total_count(df)
+
+
+# ---------------------------------------------------------------------------
+# combined_channel_matches_directional_sum
+# ---------------------------------------------------------------------------
+
+
+def _combined_plus_directional_df() -> pd.DataFrame:
+    # Reproduces the real "Neutor" pattern confirmed 2026-08-21: the
+    # combined channel (id "100035541") already equals the sum of its two
+    # directional channels for the first two rows; the third row is a
+    # deliberate mismatch (to prove the check can fail, not just pass);
+    # the fourth row has no directional data at all (a gap), which must
+    # read as "nothing to check", not "mismatch".
+    return pd.DataFrame(
+        {
+            "100035541 (Neutor)": [4, 7, 99, 5],
+            "101035541 (Neutor stadteinwärts)": [1, 5, 1, None],
+            "102035541 (Neutor stadtauswärts)": [3, 2, 1, None],
+        }
+    )
+
+
+def test_combined_channel_matches_directional_sum_confirms_real_pattern() -> None:
+    df = _combined_plus_directional_df()
+
+    result = combined_channel_matches_directional_sum(df, station_id="100035541")
+
+    assert bool(result.iloc[0]) is True  # 4 == 1 + 3
+    assert bool(result.iloc[1]) is True  # 7 == 5 + 2
+    assert bool(result.iloc[2]) is False  # 99 != 1 + 1
+    assert result.iloc[3] is pd.NA  # no directional data to compare against
+
+
+def test_combined_channel_matches_directional_sum_accepts_int_station_id() -> None:
+    df = _combined_plus_directional_df()
+    result = combined_channel_matches_directional_sum(df, station_id=100035541)
+    assert bool(result.iloc[0]) is True
+
+
+def test_combined_channel_matches_directional_sum_null_combined_is_not_checked() -> (
+    None
+):
+    df = pd.DataFrame(
+        {
+            "1 (combined)": [None],
+            "2 (dir a)": [3.0],
+            "3 (dir b)": [4.0],
+        }
+    )
+    result = combined_channel_matches_directional_sum(df, station_id="1")
+    assert result.iloc[0] is pd.NA
+
+
+def test_combined_channel_matches_directional_sum_partial_directional_gap_is_a_known_limitation() -> (
+    None
+):
+    # Pins a documented, accepted limitation (see the function's Returns
+    # docstring): a *partial* directional gap (one of two channels null,
+    # the other present) is NOT detected as "nothing to check" - it's
+    # scored as a disagreement instead, because requiring every
+    # directional column non-null would break multi-generation stations
+    # (several reissued-channel-id columns are null outside their own
+    # vintage on every row, not just gap rows). This test exists so a
+    # future change to this behavior is a deliberate decision, not an
+    # accidental one.
+    df = pd.DataFrame(
+        {
+            "1 (combined)": [10.0],
+            "2 (dir a)": [None],  # a genuine gap on this one channel
+            "3 (dir b)": [4.0],
+        }
+    )
+    result = combined_channel_matches_directional_sum(df, station_id="1")
+    assert bool(result.iloc[0]) is False  # not pd.NA, despite the real gap
+
+
+def test_combined_channel_matches_directional_sum_raises_when_no_combined_channel() -> (
+    None
+):
+    df = pd.DataFrame({"2 (dir a)": [1.0], "3 (dir b)": [2.0]})
+    with pytest.raises(ModelTableError):
+        combined_channel_matches_directional_sum(df, station_id="1")
+
+
+def test_combined_channel_matches_directional_sum_raises_when_no_directional_channels() -> (
+    None
+):
+    df = pd.DataFrame({"1 (combined)": [5.0]})
+    with pytest.raises(ModelTableError):
+        combined_channel_matches_directional_sum(df, station_id="1")
 
 
 # ---------------------------------------------------------------------------
