@@ -412,6 +412,64 @@ def test_format_email_body_omits_timing_gap_note_within_grid_tolerance() -> None
 
 
 # ---------------------------------------------------------------------------
+# format_email_body_html
+# ---------------------------------------------------------------------------
+
+
+def test_format_email_body_html_lists_every_station_and_flags_only_selected() -> None:
+    station_a = _report("1", 5.0, name="Station A")
+    station_b = _report("2", 20.0, name="Station B")
+    body = daily_report.format_email_body_html(
+        date(2026, 8, 19),
+        [station_a, station_b],
+        [station_b],
+        {"2": "It rained a lot."},
+        ["Station C"],
+    )
+    assert "<html>" in body
+    assert "Station A" in body
+    assert "Station B" in body
+    assert body.count("It rained a lot.") == 1
+    assert "Station C" in body
+
+
+def test_format_email_body_html_shows_na_and_reason_for_unresolved_station() -> None:
+    unresolved = _report("1", None, name="Station A")
+    body = daily_report.format_email_body_html(
+        date(2026, 8, 19), [unresolved], [], {}, []
+    )
+    assert "n/a" in body
+    assert "no bike-count reading near 24h ago" in body
+
+
+def test_format_email_body_html_flags_stale_station_in_table_and_summary() -> None:
+    stale = _report("1", 5.0, name="Station A", data_age=pd.Timedelta(days=2))
+    body = daily_report.format_email_body_html(
+        date(2026, 8, 19), [stale], [stale], {}, []
+    )
+    assert "STALE" in body
+    assert "1 stale" in body
+    assert "Note:" in body
+
+
+def test_format_email_body_html_escapes_untrusted_text() -> None:
+    # station_name and the AI explanation are both rendered verbatim into
+    # HTML - a literal "<script>" must come out escaped, not executable.
+    malicious = _report("1", 5.0, name="<script>alert(1)</script>")
+    body = daily_report.format_email_body_html(
+        date(2026, 8, 19),
+        [malicious],
+        [malicious],
+        {"1": "<img src=x onerror=alert(1)>"},
+        [],
+    )
+    assert "<script>" not in body
+    assert "&lt;script&gt;" in body
+    assert "<img src=x onerror=alert(1)>" not in body
+    assert "&lt;img" in body
+
+
+# ---------------------------------------------------------------------------
 # generate_explanation
 # ---------------------------------------------------------------------------
 

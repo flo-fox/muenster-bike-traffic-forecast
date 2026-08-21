@@ -5,7 +5,8 @@ Thin orchestration only: fetches live data with the *uncached* functions
 `dashboard_common.py` are pointless for a one-shot process that exits
 immediately after running), builds each station's `daily_report.
 StationAccuracyReport`, asks Claude to explain the biggest deviations, and
-sends the resulting plain-text email via Gmail.
+sends the resulting multipart/alternative (plain-text + HTML) email via
+Gmail.
 
 Run manually for a local dry run (four required env vars):
 
@@ -134,9 +135,10 @@ def send_email(
     app_password: str,
     recipient: str,
     subject: str,
-    body: str,
+    text_body: str,
+    html_body: str,
 ) -> None:
-    """Sends a plain-text email via Gmail SMTP over SSL.
+    """Sends a multipart/alternative (plain-text + HTML) email via Gmail SMTP.
 
     Args:
         smtp_class: The SMTP class to instantiate (`smtplib.SMTP_SSL` in
@@ -145,13 +147,15 @@ def send_email(
         app_password: Gmail app-specific password for `sender`.
         recipient: Recipient email address.
         subject: Email subject line.
-        body: Plain-text email body.
+        text_body: Plain-text email body (the `text/plain` part).
+        html_body: HTML email body (the `text/html` alternative part).
     """
     message = EmailMessage()
     message["Subject"] = subject
     message["From"] = sender
     message["To"] = recipient
-    message.set_content(body)
+    message.set_content(text_body)
+    message.add_alternative(html_body, subtype="html")
 
     with smtp_class("smtp.gmail.com", 465) as smtp:
         smtp.login(sender, app_password)
@@ -229,7 +233,10 @@ def main() -> None:
             logger.warning("Explanation failed for %s: %s", report.station_id, exc)
 
     subject = daily_report.format_email_subject(as_of)
-    body = daily_report.format_email_body(
+    text_body = daily_report.format_email_body(
+        as_of, reports, flagged, explanations, dropped
+    )
+    html_body = daily_report.format_email_body_html(
         as_of, reports, flagged, explanations, dropped
     )
     send_email(
@@ -238,7 +245,8 @@ def main() -> None:
         os.environ["GMAIL_APP_PASSWORD"],
         os.environ["RECIPIENT_EMAIL"],
         subject,
-        body,
+        text_body,
+        html_body,
     )
     logger.info("Sent daily forecast report for %s (%d dropped).", as_of, len(dropped))
 

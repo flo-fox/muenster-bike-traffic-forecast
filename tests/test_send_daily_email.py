@@ -112,6 +112,7 @@ def test_send_email_logs_in_and_sends_with_correct_fields() -> None:
         "recipient@example.com",
         "Test subject",
         "Test body",
+        "<p>Test body</p>",
     )
 
     assert len(_FakeSMTP.instances) == 1
@@ -121,4 +122,12 @@ def test_send_email_logs_in_and_sends_with_correct_fields() -> None:
     assert smtp.sent_message["Subject"] == "Test subject"
     assert smtp.sent_message["From"] == "sender@example.com"
     assert smtp.sent_message["To"] == "recipient@example.com"
-    assert smtp.sent_message.get_content().strip() == "Test body"
+    assert smtp.sent_message.get_content_type() == "multipart/alternative"
+    assert (
+        smtp.sent_message.get_body(preferencelist=("plain",)).get_content().strip()
+        == "Test body"
+    )
+    assert (
+        smtp.sent_message.get_body(preferencelist=("html",)).get_content().strip()
+        == "<p>Test body</p>"
+    )

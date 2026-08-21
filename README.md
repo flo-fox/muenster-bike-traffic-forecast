@@ -78,8 +78,8 @@ A scheduled GitHub Actions workflow (`.github/workflows/daily_forecast_email.yml
   forecast history is stored anywhere) and shows today's fresh 24h-ahead
   forecast too.
 - Asks Claude for a short, grounded explanation of the biggest deviations
-  (default: top 5 by absolute error).
-- Emails the result via Gmail.
+  (default: top 3 by absolute error).
+- Emails the result via Gmail, as an HTML report with a plain-text fallback.
 
 Unlike the dashboard, this **does** need credentials — set these as
 [GitHub Actions secrets](https://docs.github.com/en/actions/security-guides/encrypted-secrets)
