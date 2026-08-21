@@ -9,6 +9,13 @@
             "command": "python .claude/hooks/check_review_reminder.py",
             "timeout": 15,
             "statusMessage": "Checking whether bike-forecast-reviewer should run first..."
+          },
+          {
+            "type": "command",
+            "command": "python .claude/hooks/run_tests.py",
+            "if": "Bash(git commit *)",
+            "timeout": 60,
+            "statusMessage": "Running test suite before commit..."
           }
         ]
       }
@@ -28,12 +35,32 @@
             "command": "python .claude/hooks/check_security.py",
             "timeout": 15,
             "statusMessage": "Checking for hardcoded secrets and unsafe calls..."
-          },
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "matcher": "bike-forecast-reviewer",
+        "hooks": [
           {
             "type": "command",
             "command": "python .claude/hooks/run_tests.py",
             "timeout": 60,
-            "statusMessage": "Running test suite..."
+            "statusMessage": "Running test suite before bike-forecast-reviewer..."
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "bike-forecast-reviewer",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .claude/hooks/run_tests.py",
+            "timeout": 60,
+            "statusMessage": "Running test suite after bike-forecast-reviewer..."
           }
         ]
       }

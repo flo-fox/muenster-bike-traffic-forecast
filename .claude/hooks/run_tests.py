@@ -1,8 +1,12 @@
-"""PostToolUse hook: runs the full pytest suite after a .py/.ipynb change.
+"""Runs the full pytest suite and reports failures via systemMessage.
 
-Silent on pass; on failure, feeds the tail of the pytest output back to
-Claude (hookSpecificOutput.additionalContext) and surfaces a short banner
-to the user (systemMessage).
+Invoked from three sites - before a `git commit` (PreToolUse/Bash, gated
+by the `if` filter in settings.json to only fire on commit commands), and
+before/after the bike-forecast-reviewer subagent runs (SubagentStart/
+SubagentStop) - rather than after every single Write/Edit, which produced
+a full-suite run on every file change regardless of how small. Warn-only
+in all three cases - never blocks, matching this project's existing
+PreToolUse pattern (check_review_reminder.py).
 """
 
 import json
@@ -34,36 +38,13 @@ def _resolve_python(repo_root: Path) -> str:
     return str(venv_python) if venv_python.exists() else sys.executable
 
 
-def _report(system_message: str, context: str) -> None:
-    """Emit the hookSpecificOutput/systemMessage JSON payload."""
-    print(
-        json.dumps(
-            {
-                "systemMessage": system_message,
-                "hookSpecificOutput": {
-                    "hookEventName": "PostToolUse",
-                    "additionalContext": context,
-                },
-            }
-        )
-    )
-
-
 def main() -> None:
-    """Read the PostToolUse payload from stdin and run pytest if relevant."""
-    try:
-        payload = json.load(sys.stdin)
-    except json.JSONDecodeError:
-        return
-    tool_input = payload.get("tool_input", {})
-    file_path = (
-        tool_input.get("file_path")
-        or tool_input.get("notebook_path")
-        or payload.get("tool_response", {}).get("filePath")
-        or ""
-    )
-    if not file_path.endswith((".py", ".ipynb")):
-        return
+    """Run pytest unconditionally and print a systemMessage banner on failure."""
+    # Every trigger site for this hook (pre-commit, subagent start/stop)
+    # always wants a full run - unlike the old per-edit version, there's
+    # nothing left to gate on, so the stdin payload's shape doesn't matter;
+    # it's only read so an unconsumed pipe never blocks the caller.
+    sys.stdin.read()
 
     repo_root = Path(__file__).resolve().parents[2]
     python = _resolve_python(repo_root)
@@ -76,26 +57,21 @@ def main() -> None:
             timeout=PYTEST_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired:
-        _report(
-            f"pytest timed out after {PYTEST_TIMEOUT_SECONDS}s - see details",
-            f"The full test suite did not finish within {PYTEST_TIMEOUT_SECONDS}s "
-            "after this edit. It may be hanging, or has grown too slow to run on "
-            "every edit.",
+        print(
+            json.dumps(
+                {"systemMessage": f"pytest timed out after {PYTEST_TIMEOUT_SECONDS}s"}
+            )
         )
         return
     except OSError as exc:
-        _report(
-            "Could not run pytest after this change - see details",
-            f"Failed to launch pytest via {python}: {exc}",
+        print(
+            json.dumps({"systemMessage": f"Could not run pytest via {python}: {exc}"})
         )
         return
 
     if result.returncode != 0:
-        tail = "\n".join((result.stdout + result.stderr).splitlines()[-40:])
-        _report(
-            "pytest failed after this change - see details",
-            f"Full test suite failed after this edit:\n{tail}",
-        )
+        tail = "\n".join((result.stdout + result.stderr).splitlines()[-15:])
+        print(json.dumps({"systemMessage": f"pytest failed:\n{tail}"}))
 
 
 if __name__ == "__main__":
