@@ -19,6 +19,7 @@ today, which is not checked for and is an accepted risk.
 
 from __future__ import annotations
 
+import html
 import math
 from dataclasses import dataclass
 from datetime import date
@@ -30,7 +31,7 @@ import pandas as pd
 from muenster_bike_forecast import inference
 from muenster_bike_forecast.data.bike_counts import Station
 
-TOP_N_DEVIATIONS: Final[int] = 5
+TOP_N_DEVIATIONS: Final[int] = 3
 YESTERDAY_LOOKBACK: Final[pd.Timedelta] = pd.Timedelta(hours=24)
 # How close a bike-count reading must be to "24h before now" to count as
 # yesterday's basis for the accuracy check - a few missed 15-minute
@@ -48,18 +49,18 @@ NOTABLE_TIMING_GAP: Final[pd.Timedelta] = pd.Timedelta(minutes=15)
 # (dashboard_common imports it) into a process with no Streamlit runtime.
 STALENESS_WARNING_THRESHOLD: Final[pd.Timedelta] = pd.Timedelta(hours=36)
 DEFAULT_EXPLANATION_MODEL: Final[str] = "claude-haiku-4-5"
-DEFAULT_EXPLANATION_MAX_TOKENS: Final[int] = 300
+DEFAULT_EXPLANATION_MAX_TOKENS: Final[int] = 160
 
 _EXPLANATION_SYSTEM_PROMPT: Final[str] = (
     "You explain short-term bike-traffic forecast misses for one bike-"
     "counting station in Münster, Germany, using only the facts given to "
-    "you in the user message. Write one short paragraph (roughly 80-120 "
-    "words), plain language, no headers or bullet points. Ground your "
-    "explanation strictly in the provided numbers, weather, and calendar "
-    "flags - never invent a specific unavailable cause (a named event, "
-    "road closure, festival, or similar not present in the data). If "
-    "nothing in the given data plausibly explains the deviation, say so "
-    "plainly instead of guessing."
+    "you in the user message. Write 2-3 sentences (roughly 40-60 words), "
+    "plain language, no headers or bullet points. Ground your explanation "
+    "strictly in the provided numbers, weather, and calendar flags - never "
+    "invent a specific unavailable cause (a named event, road closure, "
+    "festival, or similar not present in the data). If nothing in the "
+    "given data plausibly explains the deviation, say so plainly instead "
+    "of guessing."
 )
 
 
@@ -588,3 +589,147 @@ def format_email_body(
         "bike-count source hasn't retroactively revised past data."
     )
     return "\n".join(lines)
+
+
+def _station_row_notes_html(report: StationAccuracyReport) -> str:
+    """Renders one station table row's inline notes (stale/unresolved/offset) as HTML."""
+    notes: list[str] = []
+    if report.unresolved_reason:
+        notes.append(html.escape(report.unresolved_reason))
+    if report.is_stale:
+        notes.append(
+            f"STALE: 'now' reading is {report.data_age} old - source hasn't "
+            "published newer data yet"
+        )
+    if (
+        report.prediction_timing_gap
+        and report.prediction_timing_gap > NOTABLE_TIMING_GAP
+    ):
+        notes.append(
+            f"predicted/actual offset by ~{report.prediction_timing_gap}, not "
+            "exactly the same moment"
+        )
+    if not notes:
+        return ""
+    return (
+        '<br><span style="font-size:0.85em;color:#666;">' + "; ".join(notes) + "</span>"
+    )
+
+
+def format_email_body_html(
+    as_of: date,
+    reports: list[StationAccuracyReport],
+    flagged: list[StationAccuracyReport],
+    explanations: dict[str, str],
+    dropped_stations: list[str],
+) -> str:
+    """Builds the HTML email body.
+
+    Same content, values, and thresholds as `format_email_body` - this is
+    an alternate rendering (a styled table plus sectioned deviations
+    instead of fixed-width text), meant to be sent as the `text/html`
+    alternative alongside `format_email_body`'s `text/plain` part, not a
+    replacement for it.
+
+    Args:
+        as_of: The report date.
+        reports: Every successfully-processed station's report.
+        flagged: The subset of `reports` (typically from
+            `select_top_deviations`) that get an explanation section.
+        explanations: `station_id` -> AI-generated explanation text, for
+            each station in `flagged`.
+        dropped_stations: Names of stations that couldn't be processed at
+            all.
+
+    Returns:
+        The full HTML email body, as a standalone `<html>` document.
+    """
+    if flagged and flagged[0].pct_diff is not None:
+        top_line = (
+            f"{html.escape(flagged[0].station_name)} at {flagged[0].pct_diff:+.1f}%"
+        )
+    elif flagged:
+        top_line = html.escape(flagged[0].station_name)
+    else:
+        top_line = "n/a"
+    n_stale = sum(1 for report in reports if report.is_stale)
+    stale_note = f", {n_stale} stale" if n_stale else ""
+    summary = (
+        f"{len(reports)} station(s) checked, {len(dropped_stations)} dropped"
+        f"{stale_note}, top miss: {top_line}"
+    )
+
+    row_cells = '<td style="padding:4px 8px;text-align:right;border-bottom:1px solid #ddd;">{}</td>'
+    table_rows = []
+    for report in sorted(reports, key=lambda report: report.station_name):
+        predicted = (
+            f"{report.predicted_for_now:.0f}"
+            if report.predicted_for_now is not None
+            else "n/a"
+        )
+        pct = f"{report.pct_diff:+.1f}%" if report.pct_diff is not None else "n/a"
+        table_rows.append(
+            "<tr>"
+            f'<td style="padding:4px 8px;border-bottom:1px solid #ddd;">'
+            f"{html.escape(report.station_name)}{_station_row_notes_html(report)}</td>"
+            + row_cells.format(predicted)
+            + row_cells.format(f"{report.actual_now:.0f}")
+            + row_cells.format(pct)
+            + row_cells.format(f"{report.forecast_24h_ahead:.0f}")
+            + "</tr>"
+        )
+
+    deviation_sections = []
+    if not flagged:
+        deviation_sections.append(
+            "<p>None - no station had a resolvable yesterday comparison.</p>"
+        )
+    for report in flagged:
+        pct = (
+            f"{report.pct_diff:+.1f}%"
+            if report.pct_diff is not None
+            else "undefined (actual was 0)"
+        )
+        stale_html = (
+            f"<p><em>Note: this station's data is {report.data_age} old (stale).</em></p>"
+            if report.is_stale
+            else ""
+        )
+        explanation = html.escape(
+            explanations.get(report.station_id, "(no explanation generated)")
+        )
+        deviation_sections.append(
+            f"<h3>{html.escape(report.station_name)} ({html.escape(report.station_id)})</h3>"
+            f"<p>Predicted {report.predicted_for_now:.0f}, actual "
+            f"{report.actual_now:.0f} ({pct})</p>"
+            f"{stale_html}"
+            f"<p>{explanation}</p>"
+        )
+
+    dropped_html = (
+        f"<p>Dropped (no usable recent data): {html.escape(', '.join(dropped_stations))}</p>"
+        if dropped_stations
+        else ""
+    )
+
+    return (
+        '<html><body style="font-family:Arial,Helvetica,sans-serif;color:#222;">'
+        f"<h2>Bike traffic forecast report for {as_of.isoformat()}</h2>"
+        f"<p>{summary}</p>"
+        '<table style="border-collapse:collapse;width:100%;">'
+        '<tr style="background:#f0f0f0;text-align:right;">'
+        '<th style="padding:4px 8px;text-align:left;">Station</th>'
+        '<th style="padding:4px 8px;">Predicted (~24h ago)</th>'
+        '<th style="padding:4px 8px;">Actual now</th>'
+        '<th style="padding:4px 8px;">% diff</th>'
+        '<th style="padding:4px 8px;">Forecast +24h</th>'
+        "</tr>" + "".join(table_rows) + "</table>"
+        "<h2>Notable deviations</h2>"
+        + "".join(deviation_sections)
+        + dropped_html
+        + '<p style="font-size:0.85em;color:#666;">Note: &quot;yesterday&#x27;s '
+        "forecast&quot; is recomputed today from the same historical window, "
+        "not a stored value - this assumes the upstream bike-count source "
+        "hasn't retroactively revised past data.</p>"
+        "</body></html>"
+    )
