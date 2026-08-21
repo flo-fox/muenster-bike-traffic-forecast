@@ -44,23 +44,22 @@ except FETCH_ERRORS as exc:
 
 current_row = result["current_row"]
 forecast_value = result["forecast_value"]
+summary = result["forecast_summary"]
 target_time = current_row["datetime"] + pd.Timedelta(hours=24)
 data_age = (
     pd.Timestamp.now(tz="Europe/Berlin").tz_localize(None) - current_row["datetime"]
 )
 
-col1, col2, col3 = st.columns(3)
-col1.metric("Current count (per 15 min)", f"{current_row['total_count']:.0f}")
-col2.metric(
-    "Forecast in 24h (per 15 min)",
-    f"{forecast_value:.0f}",
-    delta=f"{forecast_value - current_row['total_count']:+.0f}",
+# --- Primary: rolling next-24h headline ---
+st.subheader(f"Predicted traffic, next 24h: {summary.total_predicted_count:,.0f}")
+st.markdown(
+    f"**Peak expected:** ~{summary.peak_datetime:%a %H:%M} "
+    f"({summary.peak_value:.0f} per 15min)"
 )
-col3.metric("Station", station.station_id, help=station.name)
-
 st.caption(
-    f"Latest available data: **{current_row['datetime']:%Y-%m-%d %H:%M}** (Europe/Berlin) "
-    f"→ forecast target: **{target_time:%Y-%m-%d %H:%M}**"
+    f"Rolling 24h window from the latest available data "
+    f"(**{current_row['datetime']:%Y-%m-%d %H:%M}**, Europe/Berlin) forward — "
+    'not a calendar-day ("tomorrow") total.'
 )
 if data_age > STALENESS_WARNING_THRESHOLD:
     st.warning(
@@ -69,6 +68,23 @@ if data_age > STALENESS_WARNING_THRESHOLD:
         "This forecast is anchored to the most recent data available, not "
         "necessarily to right now."
     )
+
+st.divider()
+
+# --- Secondary: point-in-time detail (demoted, still fully visible) ---
+st.caption("Point-in-time detail")
+col1, col2, col3 = st.columns(3)
+col1.metric("Current count (per 15 min)", f"{current_row['total_count']:.0f}")
+col2.metric(
+    "Forecast in 24h (per 15 min)",
+    f"{forecast_value:.0f}",
+    delta=f"{forecast_value - current_row['total_count']:+.0f}",
+)
+col3.metric("Station", station.station_id, help=station.name)
+st.caption(
+    f"Latest available data: **{current_row['datetime']:%Y-%m-%d %H:%M}** (Europe/Berlin) "
+    f"→ forecast target: **{target_time:%Y-%m-%d %H:%M}**"
+)
 
 st.plotly_chart(
     render_forecast_chart(result["history"], current_row, result["forecast_curve"]),

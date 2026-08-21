@@ -16,7 +16,10 @@ from dashboard_common import (
 )
 
 st.title("🗺️ City map")
-st.caption("Current reading and 24h-ahead forecast for every station, mapped.")
+st.caption(
+    "Actual traffic over the last 24h and predicted traffic over the next "
+    "24h for every station, mapped."
+)
 
 as_of = date.today()
 try:

@@ -134,6 +134,14 @@ def cached_calendar_tables(year: int) -> tuple[pd.DataFrame, pd.DataFrame]:
 def build_forecast(station: Station, as_of: date) -> dict[str, object]:
     """Fetches live data and runs the production model for one station.
 
+    Returns:
+        Dict with keys ``history``, ``current_row``, ``forecast_value``,
+        ``forecast_curve``, ``forecast_summary`` (an
+        `inference.ForecastSummary` - a rolling next-24h total + peak,
+        aggregated from `forecast_curve`), and ``actual_total_24h`` (the
+        actual observed total over the rolling last-24h window ending at
+        `current_row`'s timestamp).
+
     Raises:
         inference.InferenceError: if no recent bike-count data is available
             for `station`, the assembled feature row cannot be scored, or a
@@ -175,6 +183,11 @@ def build_forecast(station: Station, as_of: date) -> dict[str, object]:
         forecast_curve = inference.predict_forecast_curve(
             model, history, station.station_id, current_row["datetime"]
         )
+        forecast_summary = inference.summarize_forecast_curve(forecast_curve)
+        window_rows = inference.select_window_rows(
+            history, station.station_id, current_row["datetime"]
+        )
+        actual_total_24h = float(window_rows["total_count"].sum())
     except FileNotFoundError as exc:
         raise inference.InferenceError(
             "A required model artifact is missing on this server; the app "
@@ -186,6 +199,8 @@ def build_forecast(station: Station, as_of: date) -> dict[str, object]:
         "current_row": current_row,
         "forecast_value": forecast_value,
         "forecast_curve": forecast_curve,
+        "forecast_summary": forecast_summary,
+        "actual_total_24h": actual_total_24h,
     }
 
 
@@ -229,14 +244,13 @@ def build_fleet_snapshot(as_of: date) -> FleetSnapshot:
             )
             dropped.append(station.name)
             continue
-        current_row = result["current_row"]
         rows.append(
             {
                 "station_id": station.station_id,
                 "name": station.name,
-                "current_total_count": current_row["total_count"],
-                "current_datetime": current_row["datetime"],
-                "forecast_value": result["forecast_value"],
+                "actual_total_24h": result["actual_total_24h"],
+                "predicted_total_24h": result["forecast_summary"].total_predicted_count,
+                "current_datetime": result["current_row"]["datetime"],
             }
         )
     return FleetSnapshot(data=pd.DataFrame(rows), dropped_stations=dropped)
@@ -373,7 +387,8 @@ def _spread_coincident_markers(locations: pd.DataFrame) -> pd.DataFrame:
 
 
 def render_station_map(snapshot: pd.DataFrame, locations: pd.DataFrame) -> go.Figure:
-    """Plots every station on OpenStreetMap, sized/colored by its live forecast.
+    """Plots every station on OpenStreetMap, sized/colored by its predicted
+    next-24h total.
 
     `go.Scattermap` markers have no `line`/border property (unlike a plain
     `go.Scatter` marker), and OpenStreetMap tiles have no single fixed
@@ -395,7 +410,7 @@ def render_station_map(snapshot: pd.DataFrame, locations: pd.DataFrame) -> go.Fi
     merged = snapshot.merge(spread_locations, on="station_id")
     merged["label"] = merged["name"] + " (" + merged["station_id"] + ")"
 
-    value = merged["forecast_value"]
+    value = merged["predicted_total_24h"]
     value_range = value.max() - value.min()
     size_min, size_max = MARKER_SIZE_RANGE
     if value_range > 0:
@@ -427,18 +442,18 @@ def render_station_map(snapshot: pd.DataFrame, locations: pd.DataFrame) -> go.Fi
             mode="markers",
             marker=dict(
                 size=merged["marker_size"],
-                color=merged["forecast_value"],
+                color=merged["predicted_total_24h"],
                 colorscale="YlOrRd",
                 cmin=value.min(),
                 cmax=value.max(),
-                colorbar=dict(title="24h forecast"),
+                colorbar=dict(title="Predicted total (next 24h)"),
                 opacity=1.0,
             ),
             text=merged["label"],
-            customdata=merged[["current_total_count", "forecast_value"]],
+            customdata=merged[["actual_total_24h", "predicted_total_24h"]],
             hovertemplate=(
-                "%{text}<br>Current: %{customdata[0]:.0f}<br>"
-                "Forecast +24h: %{customdata[1]:.0f}<extra></extra>"
+                "%{text}<br>Actual (last 24h): %{customdata[0]:.0f}<br>"
+                "Predicted (next 24h): %{customdata[1]:.0f}<extra></extra>"
             ),
             showlegend=False,
         )

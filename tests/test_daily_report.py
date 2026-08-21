@@ -27,14 +27,21 @@ class _FakeModel:
         return (X["total_count"] * 3).to_numpy()
 
 
-def _raw_bike_df() -> pd.DataFrame:
-    """Two readings 24h apart (10, then 20) for one station."""
+def _raw_bike_df_spanning_49h(count: float = 10.0) -> pd.DataFrame:
+    """49 hourly readings (a constant `count`) for one station, spanning 48h.
+
+    `build_station_report` needs source rows reaching back ~48h from "now"
+    to reconstruct both "today's forecast" (last 24h of rows) and
+    "yesterday's forecast for the last 24h" (the 24h of rows before that) -
+    this fixture provides exactly that.
+    """
+    times = pd.date_range("2024-06-10 00:00", periods=49, freq="h")
     return pd.DataFrame(
         {
-            "station_id": [str(STATION_ID)] * 2,
-            "datetime": pd.to_datetime(["2024-06-10 08:00", "2024-06-11 08:00"]),
-            f"{STATION_ID} (Test)": [10, 20],
-            f"{STATION_ID}-status": [0, 0],
+            "station_id": [str(STATION_ID)] * len(times),
+            "datetime": times,
+            f"{STATION_ID} (Test)": [count] * len(times),
+            f"{STATION_ID}-status": [0] * len(times),
         }
     )
 
@@ -43,14 +50,15 @@ def _weather_wide_df(bike_datetimes: pd.Series) -> pd.DataFrame:
     localized = localize_bike_timestamps(pd.DataFrame({"datetime": bike_datetimes}))[
         "timestamp"
     ]
+    n = len(localized)
     return pd.DataFrame(
         {
-            "station_id": ["01766"] * len(localized),
+            "station_id": ["01766"] * n,
             "timestamp": localized,
-            "air_temperature_c": [15.0, 16.0][: len(localized)],
-            "relative_humidity_pct": [70.0, 71.0][: len(localized)],
-            "precipitation_mm": [0.0, 2.0][: len(localized)],
-            "wind_speed_ms": [3.0, 3.5][: len(localized)],
+            "air_temperature_c": [15.0] * n,
+            "relative_humidity_pct": [70.0] * n,
+            "precipitation_mm": [0.0] * n,
+            "wind_speed_ms": [3.0] * n,
         }
     )
 
@@ -69,28 +77,28 @@ def _ratio_table() -> pd.DataFrame:
     return pd.DataFrame({"station_id": [STATION_ID], "weekend_weekday_ratio": [0.65]})
 
 
-def _feature_history(times: list[str], total_counts: list[float]) -> pd.DataFrame:
-    return pd.DataFrame(
-        {
-            "station_id": [STATION_ID] * len(times),
-            "datetime": pd.to_datetime(times),
-            "total_count": total_counts,
-        }
-    )
-
-
-def _dummy_context(dt: str = "2024-06-10 08:00") -> daily_report.RowContext:
-    return daily_report.RowContext(
-        datetime=pd.Timestamp(dt),
-        hour=8,
+def _dummy_window_context(
+    window_start: str = "2024-06-10 08:00", window_end: str = "2024-06-11 08:00"
+) -> daily_report.WindowContext:
+    return daily_report.WindowContext(
+        window_start=pd.Timestamp(window_start),
+        window_end=pd.Timestamp(window_end),
         day_of_week=0,
         is_public_holiday=False,
         is_school_holiday=False,
         is_lecture_period=False,
-        weather_air_temperature_c=15.0,
-        weather_precipitation_mm=0.0,
-        weather_wind_speed_ms=3.0,
-        weather_relative_humidity_pct=70.0,
+        mean_air_temperature_c=15.0,
+        total_precipitation_mm=0.0,
+        mean_wind_speed_ms=3.0,
+        mean_relative_humidity_pct=70.0,
+    )
+
+
+def _dummy_forecast_summary(total: float = 90.0) -> inference.ForecastSummary:
+    return inference.ForecastSummary(
+        total_predicted_count=total,
+        peak_datetime=pd.Timestamp("2024-06-11 08:15"),
+        peak_value=30.0,
     )
 
 
@@ -100,7 +108,6 @@ def _report(
     pct_diff: float = 10.0,
     name: str | None = None,
     data_age: pd.Timedelta = pd.Timedelta(hours=1),
-    prediction_timing_gap: pd.Timedelta = pd.Timedelta(0),
 ) -> daily_report.StationAccuracyReport:
     resolved = abs_error is not None
     return daily_report.StationAccuracyReport(
@@ -108,76 +115,72 @@ def _report(
         station_name=name or f"Station {station_id}",
         now_datetime=pd.Timestamp("2024-06-11 08:00"),
         data_age=data_age,
-        actual_now=20.0,
-        forecast_24h_ahead=25.0,
-        now_context=_dummy_context("2024-06-11 08:00"),
-        predicted_for_now=20.0 + abs_error if resolved else None,
+        forecast_summary=_dummy_forecast_summary(),
+        predicted_total=220.0 + abs_error if resolved else None,
+        actual_total=220.0 if resolved else None,
         abs_error=abs_error,
         pct_diff=pct_diff if resolved else None,
-        prediction_basis_context=(
-            _dummy_context("2024-06-10 08:00") if resolved else None
-        ),
-        prediction_timing_gap=prediction_timing_gap if resolved else None,
+        window_context=_dummy_window_context() if resolved else None,
         unresolved_reason=None if resolved else "no bike-count reading near 24h ago",
     )
 
 
 # ---------------------------------------------------------------------------
-# RowContext
+# WindowContext
 # ---------------------------------------------------------------------------
 
 
-def test_row_context_from_feature_row_maps_fields_and_handles_missing_weather() -> None:
-    row = pd.Series(
+def test_window_context_from_window_rows_aggregates_weather_and_uses_latest_calendar_flags() -> (
+    None
+):
+    rows = pd.DataFrame(
         {
-            "datetime": pd.Timestamp("2024-06-10 08:00"),
-            "hour": 8,
-            "day_of_week": 0,
-            "is_public_holiday": True,
-            "is_school_holiday": False,
-            "is_lecture_period": True,
-            "weather_air_temperature_c": 15.5,
-            "weather_precipitation_mm": float("nan"),
-            "weather_wind_speed_ms": 3.0,
-            "weather_relative_humidity_pct": 70.0,
+            "datetime": pd.to_datetime(
+                ["2024-06-10 08:00", "2024-06-10 09:00", "2024-06-10 10:00"]
+            ),
+            "day_of_week": [0, 0, 0],
+            "is_public_holiday": [False, False, True],
+            "is_school_holiday": [False, False, False],
+            "is_lecture_period": [True, True, True],
+            "weather_air_temperature_c": [10.0, 20.0, float("nan")],
+            "weather_precipitation_mm": [1.0, 2.0, 3.0],
+            "weather_wind_speed_ms": [2.0, 4.0, 6.0],
+            "weather_relative_humidity_pct": [60.0, 70.0, 80.0],
         }
     )
-    context = daily_report.RowContext.from_feature_row(row)
-    assert context.hour == 8
+
+    context = daily_report.WindowContext.from_window_rows(rows)
+
+    assert context.window_start == pd.Timestamp("2024-06-10 08:00")
+    assert context.window_end == pd.Timestamp("2024-06-10 10:00")
+    # Representative row is the latest one (10:00), which is a holiday.
     assert context.is_public_holiday is True
-    assert context.weather_air_temperature_c == 15.5
-    assert context.weather_precipitation_mm is None
+    assert context.is_lecture_period is True
+    assert context.mean_air_temperature_c == pytest.approx(15.0)  # mean of 10, 20
+    assert context.total_precipitation_mm == pytest.approx(6.0)  # sum of 1, 2, 3
+    assert context.mean_wind_speed_ms == pytest.approx(4.0)
+    assert context.mean_relative_humidity_pct == pytest.approx(70.0)
 
 
-# ---------------------------------------------------------------------------
-# select_row_near
-# ---------------------------------------------------------------------------
-
-
-def test_select_row_near_picks_closest_within_tolerance() -> None:
-    history = _feature_history(
-        ["2024-06-10 07:40", "2024-06-10 08:15", "2024-06-10 09:30"], [1.0, 2.0, 3.0]
+def test_window_context_from_window_rows_handles_all_null_weather_field() -> None:
+    rows = pd.DataFrame(
+        {
+            "datetime": pd.to_datetime(["2024-06-10 08:00"]),
+            "day_of_week": [0],
+            "is_public_holiday": [False],
+            "is_school_holiday": [False],
+            "is_lecture_period": [False],
+            "weather_air_temperature_c": [float("nan")],
+            "weather_precipitation_mm": [float("nan")],
+            "weather_wind_speed_ms": [float("nan")],
+            "weather_relative_humidity_pct": [float("nan")],
+        }
     )
-    row = daily_report.select_row_near(
-        history, STATION_ID, pd.Timestamp("2024-06-10 08:00")
-    )
-    assert row["datetime"] == pd.Timestamp("2024-06-10 08:15")
 
+    context = daily_report.WindowContext.from_window_rows(rows)
 
-def test_select_row_near_raises_when_nothing_within_tolerance() -> None:
-    history = _feature_history(["2024-06-10 05:00"], [1.0])
-    with pytest.raises(inference.InferenceError):
-        daily_report.select_row_near(
-            history, STATION_ID, pd.Timestamp("2024-06-10 08:00")
-        )
-
-
-def test_select_row_near_raises_when_no_evaluable_rows() -> None:
-    history = _feature_history(["2024-06-10 08:00"], [float("nan")])
-    with pytest.raises(inference.InferenceError):
-        daily_report.select_row_near(
-            history, STATION_ID, pd.Timestamp("2024-06-10 08:00")
-        )
+    assert context.mean_air_temperature_c is None
+    assert context.total_precipitation_mm is None
 
 
 # ---------------------------------------------------------------------------
@@ -185,11 +188,11 @@ def test_select_row_near_raises_when_no_evaluable_rows() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_build_station_report_computes_accuracy_and_forecast() -> None:
+def test_build_station_report_computes_daily_totals() -> None:
     station = Station(
         station_id=str(STATION_ID), name="Test Station", start_year=2020, channels=()
     )
-    raw = _raw_bike_df()
+    raw = _raw_bike_df_spanning_49h(count=10.0)
     weather = _weather_wide_df(raw["datetime"])
 
     report = daily_report.build_station_report(
@@ -203,22 +206,28 @@ def test_build_station_report_computes_accuracy_and_forecast() -> None:
     )
 
     assert report.station_name == "Test Station"
-    assert report.actual_now == 20.0
-    assert report.forecast_24h_ahead == pytest.approx(60.0)  # 20 * 3
-    assert report.predicted_for_now == pytest.approx(30.0)  # 10 * 3
-    assert report.abs_error == pytest.approx(10.0)  # |30 - 20|
-    assert report.pct_diff == pytest.approx(50.0)  # (30 - 20) / 20 * 100
+    # forecast_summary: last 24h of source rows (24 rows, count=10 each),
+    # each tripled by _FakeModel -> 24 * 30 = 720.
+    assert report.forecast_summary.total_predicted_count == pytest.approx(720.0)
+    # predicted_total: yesterday-anchored curve over the same 24 source
+    # rows one window earlier -> also 24 * 30 = 720.
+    assert report.predicted_total == pytest.approx(720.0)
+    # actual_total: sum of actual total_count over the last 24h window
+    # (24 rows, count=10 each) -> 240.
+    assert report.actual_total == pytest.approx(240.0)
+    assert report.abs_error == pytest.approx(480.0)
+    assert report.pct_diff == pytest.approx(200.0)
     assert report.unresolved_reason is None
-    assert report.prediction_basis_context is not None
+    assert report.window_context is not None
 
 
 def test_build_station_report_flags_stale_data() -> None:
-    # _raw_bike_df's fixed 2024 dates are always far in the past relative
-    # to whenever this test actually runs, so is_stale must be True.
+    # The fixture's fixed 2024 dates are always far in the past relative to
+    # whenever this test actually runs, so is_stale must be True.
     station = Station(
         station_id=str(STATION_ID), name="Test Station", start_year=2020, channels=()
     )
-    raw = _raw_bike_df()
+    raw = _raw_bike_df_spanning_49h()
     weather = _weather_wide_df(raw["datetime"])
 
     report = daily_report.build_station_report(
@@ -235,19 +244,15 @@ def test_build_station_report_flags_stale_data() -> None:
     assert report.data_age > daily_report.STALENESS_WARNING_THRESHOLD
 
 
-def test_build_station_report_computes_timing_gap_when_basis_row_is_offset() -> None:
-    # Basis reading is 20 minutes earlier than exactly "24h before now".
+def test_build_station_report_degrades_gracefully_without_yesterday_window() -> None:
+    # Only the last 24h of rows exist, so there's no ~48h-back history to
+    # reconstruct yesterday's forecast - today's forecast should still be
+    # computed.
     station = Station(
         station_id=str(STATION_ID), name="Test Station", start_year=2020, channels=()
     )
-    raw = pd.DataFrame(
-        {
-            "station_id": [str(STATION_ID)] * 2,
-            "datetime": pd.to_datetime(["2024-06-10 07:40", "2024-06-11 08:00"]),
-            f"{STATION_ID} (Test)": [10, 20],
-            f"{STATION_ID}-status": [0, 0],
-        }
-    )
+    full = _raw_bike_df_spanning_49h()
+    raw = full.iloc[-24:].reset_index(drop=True)  # keep only the last 24h
     weather = _weather_wide_df(raw["datetime"])
 
     report = daily_report.build_station_report(
@@ -260,34 +265,45 @@ def test_build_station_report_computes_timing_gap_when_basis_row_is_offset() -> 
         raw,
     )
 
-    assert report.prediction_timing_gap == pd.Timedelta(minutes=20)
-
-
-def test_build_station_report_degrades_gracefully_without_yesterday_row() -> None:
-    # Only one reading, so there is nothing near "24h ago" - the station's
-    # today's forecast should still be computed.
-    station = Station(
-        station_id=str(STATION_ID), name="Test Station", start_year=2020, channels=()
-    )
-    raw = _raw_bike_df().iloc[[1]]  # keep only the "now" reading
-    weather = _weather_wide_df(raw["datetime"])
-
-    report = daily_report.build_station_report(
-        station,
-        _FakeModel(),
-        _ratio_table(),
-        _public_holidays_df(),
-        _school_holidays_df(),
-        weather,
-        raw,
-    )
-
-    assert report.forecast_24h_ahead == pytest.approx(60.0)
-    assert report.predicted_for_now is None
+    # forecast_summary still resolves: it only needs the last 24h of
+    # source rows (24 rows, count=10 each, tripled -> 720), which are all
+    # present even with the ~48h-back history missing.
+    assert report.forecast_summary.total_predicted_count == pytest.approx(720.0)
+    assert report.predicted_total is None
+    assert report.actual_total is None
     assert report.abs_error is None
     assert report.pct_diff is None
-    assert report.prediction_basis_context is None
+    assert report.window_context is None
     assert report.unresolved_reason is not None
+
+
+def test_build_station_report_actual_total_skips_gaps_within_window() -> None:
+    # A few missing 15-min readings inside the last-24h window (not at its
+    # "now" boundary, which is always non-null by construction) should just
+    # be excluded from the sum, not treated as unresolved.
+    station = Station(
+        station_id=str(STATION_ID), name="Test Station", start_year=2020, channels=()
+    )
+    raw = _raw_bike_df_spanning_49h()
+    # Null out 4 of the 24 readings inside the window, keeping the last
+    # ("now") row intact.
+    gap_positions = raw.index[-10:-6]
+    raw.loc[gap_positions, f"{STATION_ID} (Test)"] = pd.NA
+    weather = _weather_wide_df(raw["datetime"])
+
+    report = daily_report.build_station_report(
+        station,
+        _FakeModel(),
+        _ratio_table(),
+        _public_holidays_df(),
+        _school_holidays_df(),
+        weather,
+        raw,
+    )
+
+    assert report.unresolved_reason is None
+    # 20 remaining valid readings (count=10 each) instead of 24.
+    assert report.actual_total == pytest.approx(200.0)
 
 
 # ---------------------------------------------------------------------------
@@ -330,10 +346,11 @@ def test_build_explanation_prompt_includes_report_numbers() -> None:
     assert "300038855" in user
     assert "+50.0%" in user
     assert "invent" in system.lower()
+    assert "daily-total" in system.lower()
 
 
-def test_build_explanation_prompt_omits_caveats_when_fresh_and_exact() -> None:
-    report = _report("1", 10.0, name="Station A")  # fresh, zero timing gap
+def test_build_explanation_prompt_omits_caveats_when_fresh() -> None:
+    report = _report("1", 10.0, name="Station A")  # fresh
     _, user = daily_report.build_explanation_prompt(report)
     assert "Caveat" not in user
 
@@ -343,15 +360,6 @@ def test_build_explanation_prompt_includes_staleness_caveat_when_stale() -> None
     _, user = daily_report.build_explanation_prompt(report)
     assert "Caveat" in user
     assert "2 days" in user
-
-
-def test_build_explanation_prompt_includes_timing_gap_caveat_when_notable() -> None:
-    report = _report(
-        "1", 10.0, name="Station A", prediction_timing_gap=pd.Timedelta(minutes=30)
-    )
-    _, user = daily_report.build_explanation_prompt(report)
-    assert "Caveat" in user
-    assert "offset" in user
 
 
 # ---------------------------------------------------------------------------
@@ -378,6 +386,8 @@ def test_format_email_body_lists_every_station_and_flags_only_selected() -> None
     assert "Station B" in body
     assert body.count("It rained a lot.") == 1
     assert "Station C" in body
+    assert "Predicted total (last 24h)" in body
+    assert "Predicted total (next 24h)" in body
 
 
 def test_format_email_body_shows_na_and_reason_for_unresolved_station() -> None:
@@ -393,22 +403,6 @@ def test_format_email_body_flags_stale_station_in_table_and_summary() -> None:
     assert "STALE" in body
     assert "1 stale" in body
     assert "Note:" in body  # per-station staleness note in "Notable deviations"
-
-
-def test_format_email_body_flags_notable_timing_gap() -> None:
-    offset = _report(
-        "1", 5.0, name="Station A", prediction_timing_gap=pd.Timedelta(minutes=30)
-    )
-    body = daily_report.format_email_body(date(2026, 8, 19), [offset], [], {}, [])
-    assert "offset by" in body
-
-
-def test_format_email_body_omits_timing_gap_note_within_grid_tolerance() -> None:
-    exact = _report(
-        "1", 5.0, name="Station A", prediction_timing_gap=pd.Timedelta(minutes=5)
-    )
-    body = daily_report.format_email_body(date(2026, 8, 19), [exact], [], {}, [])
-    assert "offset by" not in body
 
 
 # ---------------------------------------------------------------------------
