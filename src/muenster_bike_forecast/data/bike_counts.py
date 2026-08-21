@@ -32,6 +32,7 @@ from __future__ import annotations
 import io
 import json
 import re
+import time
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -100,6 +101,67 @@ def _read_capped(response: requests.Response, url: str, max_bytes: int) -> bytes
             )
         chunks.append(chunk)
     return b"".join(chunks)
+
+
+# raw.githubusercontent.com has previously rate-limited this project under
+# repeated fetching in a short window (a real, observed HTTP 429 - see the
+# `run-dashboard` skill's "Known live-data caveat"), not a hypothetical.
+# Retrying with backoff turns a transient rate-limit hit into a slower but
+# successful fetch instead of a hard failure for an unattended multi-station
+# run; a 404 (legitimate month absence) or other 4xx is never retried.
+_RETRYABLE_STATUS_CODES: Final[frozenset[int]] = frozenset({429, 500, 502, 503, 504})
+_DEFAULT_MAX_RETRIES: Final[int] = 3
+_RETRY_BASE_DELAY_SECONDS: Final[float] = 5.0
+
+
+def _get_with_retry(
+    url: str,
+    *,
+    timeout: float,
+    stream: bool = False,
+    max_retries: int = _DEFAULT_MAX_RETRIES,
+    base_delay: float = _RETRY_BASE_DELAY_SECONDS,
+) -> requests.Response:
+    """Fetches `url`, retrying with exponential backoff on 429/5xx responses.
+
+    Args:
+        url: URL to fetch.
+        timeout: Per-attempt HTTP request timeout in seconds.
+        stream: Passed through to `requests.get`.
+        max_retries: Maximum retries after the first attempt (so up to
+            `max_retries + 1` total attempts).
+        base_delay: Seconds to sleep before the first retry; doubles after
+            each subsequent one.
+
+    Returns:
+        The final `requests.Response` - may still carry a non-2xx status if
+        retries were exhausted; callers keep their own `raise_for_status()`/
+        404 handling unchanged, this only decides whether to retry first.
+
+    Raises:
+        requests.RequestException: if every attempt raises a connection-
+            level error (the final attempt's exception is propagated).
+    """
+    delay = base_delay
+    last_exc: requests.RequestException | None = None
+    response: requests.Response | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            response = requests.get(url, timeout=timeout, stream=stream)
+        except requests.RequestException as exc:
+            last_exc = exc
+        else:
+            last_exc = None
+            if response.status_code not in _RETRYABLE_STATUS_CODES:
+                return response
+        if attempt < max_retries:
+            if response is not None:
+                response.close()
+            time.sleep(delay)
+            delay *= 2
+    if last_exc is not None:
+        raise last_exc
+    return response
 
 
 _MAX_STATION_NAME_LENGTH: Final[int] = 200
@@ -209,8 +271,11 @@ class Station:
 def list_stations(timeout: float = 30.0) -> list[Station]:
     """Fetch the list of bike-counting stations from the source repo's index.
 
+    Retries with backoff on a 429/5xx response (see `_get_with_retry`)
+    before treating it as a failure.
+
     Args:
-        timeout: HTTP request timeout in seconds.
+        timeout: Per-attempt HTTP request timeout in seconds.
 
     Returns:
         One `Station` per counting location, in source order.
@@ -220,7 +285,7 @@ def list_stations(timeout: float = 30.0) -> list[Station]:
             JSON, or its shape does not match the expected station schema.
     """
     try:
-        response = requests.get(SITE_INDEX_URL, timeout=timeout)
+        response = _get_with_retry(SITE_INDEX_URL, timeout=timeout)
         response.raise_for_status()
     except requests.RequestException as exc:
         raise BikeCountDataError(
@@ -461,11 +526,15 @@ def fetch_station_month(
 ) -> pd.DataFrame | None:
     """Fetch and validate one month of raw count data for one station.
 
+    Retries with backoff on a 429/5xx response (see `_get_with_retry`)
+    before treating it as a failure - `raw.githubusercontent.com` has
+    previously rate-limited this project under repeated fetching.
+
     Args:
         station_id: Station directory id, e.g. ``"300038855"``.
         year: Calendar year to fetch.
         month: Calendar month to fetch (1-12).
-        timeout: HTTP request timeout in seconds.
+        timeout: Per-attempt HTTP request timeout in seconds.
 
     Returns:
         Validated DataFrame for that month (see `parse_station_csv`), or
@@ -480,7 +549,7 @@ def fetch_station_month(
     """
     url = station_csv_url(station_id, year, month)
     try:
-        response = requests.get(url, timeout=timeout, stream=True)
+        response = _get_with_retry(url, timeout=timeout, stream=True)
     except requests.RequestException as exc:
         raise BikeCountDataError(f"Failed to fetch {url}: {exc}") from exc
     with response:
