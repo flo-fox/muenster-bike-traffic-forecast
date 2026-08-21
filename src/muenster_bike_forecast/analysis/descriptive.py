@@ -24,6 +24,14 @@ that answer "what does the data look like":
 4. **Boolean calendar-flag comparison** (`compare_boolean_flag`): mean
    traffic when a flag (`is_public_holiday`, `is_school_holiday`,
    `is_lecture_period`) is true vs. false.
+5. **Directional (inbound/outbound) imbalance** (`classify_channel_direction`,
+   `compute_directional_totals`): unlike 1-4, these work over a station's
+   *raw channel* data (e.g. ``data/raw/joined/<station_id>.csv``), not
+   ``model_table.csv`` - they classify each non-combined channel's
+   description as inbound/outbound and sum by direction, to compare a
+   station's inbound vs. outbound traffic (not something `total_count`
+   alone can answer, since it collapses both directions into one number -
+   see `muenster_bike_forecast.modeling.model_table.compute_total_count`).
 
 Every function skips rows with a null `total_count` (or other relevant
 column) rather than treating a missing 15-minute interval as zero traffic -
@@ -35,10 +43,16 @@ DataFrames/Series/dicts; no file I/O happens here (left to the notebook, see
 
 from __future__ import annotations
 
+import re
 from typing import Final, Sequence
 
 import numpy as np
 import pandas as pd
+
+from muenster_bike_forecast.modeling.model_table import (
+    coalesce_channel_columns,
+    identify_channel_count_columns,
+)
 
 # Default weather-column bucket edges/labels, chosen to give roughly
 # concrete, human-readable ranges rather than statistically-derived
@@ -399,3 +413,127 @@ def compare_boolean_flag(
         "n_true": int(len(true_rows)),
         "n_false": int(len(false_rows)),
     }
+
+
+# Channel-description phrasing is not uniform across this project's 23
+# stations - four families observed (see notebook 07's directional-
+# imbalance section): German "stadteinwärts"/"stadtauswärts" (several
+# casings/brackets, and one real typo, "stdteinwärts", which still
+# contains "einwärts" as a substring so the pattern below catches it
+# unmodified), bare "einwärts"/"auswärts" with no "stadt" prefix, English
+# "IN"/"OUT" ("Fahrräder IN/OUT" or "[Bike IN/OUT]"), and a few stations
+# with no directional semantic at all (named by cross-street/landmark
+# instead, e.g. "Richtung Osttor") - `classify_channel_direction` returns
+# `None` for those, not a guess.
+_INBOUND_RE: Final[re.Pattern[str]] = re.compile(r"einw[äa]rts", re.IGNORECASE)
+_OUTBOUND_RE: Final[re.Pattern[str]] = re.compile(r"ausw[äa]rts", re.IGNORECASE)
+# Case-sensitive on purpose: every English-phrased channel in this dataset
+# uses uppercase "IN"/"OUT" specifically ("Fahrräder IN", "[Bike OUT]");
+# matching lowercase too would risk a false positive on an unrelated
+# German word that happens to contain "in"/"out" as a whole token.
+_INBOUND_EN_RE: Final[re.Pattern[str]] = re.compile(r"\bIN\b")
+_OUTBOUND_EN_RE: Final[re.Pattern[str]] = re.compile(r"\bOUT\b")
+
+_CHANNEL_DESCRIPTION_RE: Final[re.Pattern[str]] = re.compile(r"^\d+\s*\((.*)\)$")
+
+
+def classify_channel_direction(description: str) -> str | None:
+    """Classifies a channel description as inbound, outbound, or neither.
+
+    Args:
+        description: A channel's description text (e.g. the parenthesized
+            part of a ``"<channel_id> (<description>)"`` column name).
+
+    Returns:
+        ``"in"``, ``"out"``, or `None` if the description matches neither
+        pattern (e.g. a station whose sub-channels are named by cross-
+        street/landmark, with no inbound/outbound semantic at all - not
+        every station in this dataset is classifiable, and this is not
+        forced to guess for those).
+    """
+    if _INBOUND_RE.search(description) or _INBOUND_EN_RE.search(description):
+        return "in"
+    if _OUTBOUND_RE.search(description) or _OUTBOUND_EN_RE.search(description):
+        return "out"
+    return None
+
+
+def compute_directional_totals(
+    df: pd.DataFrame, station_id: int | str
+) -> dict[str, float] | None:
+    """Sums a station's directional channels into inbound/outbound totals.
+
+    Excludes the combined channel (id matching `station_id` - see
+    `muenster_bike_forecast.modeling.model_table.compute_total_count`,
+    which already treats it as redundant with the directional channels
+    summed here) and classifies every remaining channel by parsing its
+    description (`classify_channel_direction`), summing all channels
+    sharing a classification - including across different channel ids
+    that share a direction classification, which `coalesce_channel_columns`
+    alone does not merge (that only merges same-id duplicates).
+
+    Known, deliberately-unresolved limitation: at least two real stations
+    (Kanalpromenade Abschnitt 6, Gasselstiege) have multiple channel ids
+    classified to the same direction that are *concurrently* populated
+    for months at a time with different, only moderately correlated
+    values (confirmed by direct inspection, not sequential "one retired,
+    one active" reissued-sensor generations as originally assumed) -
+    whether summing them is correct (e.g. genuinely separate lanes) or
+    double-counts (e.g. overlapping sensor feeds) is **not verified
+    either way**, unlike `compute_total_count`'s combined-vs-directional
+    relationship, which is cross-checked by
+    `combined_channel_matches_directional_sum` against real data. Treat
+    `total_in`/`total_out` for any station with more than one channel id
+    per direction as a best-effort estimate, not a verified total - see
+    the caveats in ``notebooks/07_descriptive_analysis.ipynb``'s
+    directional-imbalance section.
+
+    Args:
+        df: One station's rows, containing channel count columns (e.g. as
+            loaded from ``data/raw/joined/<station_id>.csv``).
+        station_id: The station's own id, to exclude its combined channel.
+
+    Returns:
+        `None` if no channel could be classified as inbound or outbound at
+        all (a station with no directional semantic in its channel names).
+        Otherwise a dict with keys ``total_in``, ``total_out`` (each a
+        float total summed across the whole `df`, `NaN` if that direction
+        was classified as present but every value across every matching
+        channel was null - callers must not treat that `NaN` as "0
+        traffic").
+    """
+    channel_columns = identify_channel_count_columns(list(df.columns))
+    combined_id = str(station_id)
+
+    in_ids: list[str] = []
+    out_ids: list[str] = []
+    for channel_id, columns in channel_columns.items():
+        if channel_id == combined_id:
+            continue
+        # Guaranteed to match: `columns[0]` already passed
+        # `identify_channel_count_columns`'s equivalent-shaped filter.
+        description = _CHANNEL_DESCRIPTION_RE.match(columns[0]).group(1)
+        direction = classify_channel_direction(description)
+        if direction == "in":
+            in_ids.append(channel_id)
+        elif direction == "out":
+            out_ids.append(channel_id)
+
+    if not in_ids and not out_ids:
+        return None
+
+    def _sum_ids(ids: list[str]) -> float:
+        if not ids:
+            return float("nan")
+        per_row = pd.DataFrame(
+            {cid: coalesce_channel_columns(df, channel_columns[cid]) for cid in ids}
+        ).sum(axis=1, min_count=1)
+        # min_count=1 here too: without it, a direction classified as
+        # present but with every row null would sum to a fabricated 0.0
+        # instead of NaN (pandas' default `skipna=True` on an all-NaN
+        # Series returns 0.0, not NaN) - silently misreporting "no data"
+        # as "confirmed zero traffic", the same gotcha documented on
+        # `muenster_bike_forecast.daily_report._sum_or_none`.
+        return float(per_row.sum(min_count=1))
+
+    return {"total_in": _sum_ids(in_ids), "total_out": _sum_ids(out_ids)}
