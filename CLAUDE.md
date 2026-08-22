@@ -16,17 +16,21 @@ regression experiments. Goal here is an actual, active forecasting tool.
   notebook 11) as a first neural-net pass, `RandomForestRegressor` (sklearn,
   notebook 14) as a fourth tree-based class — see "Model selection
   rationale" below for why these were tried and not linear regression/a
-  single tree/SVM. **No single model class is currently the settled
-  "best" pick** — see the 2026-08-22 entry in "Model selection rationale"
-  for why: random forest (notebook 17's production config) was the clear
-  winner on the dataset available through 2026-08-21, but a routine data
-  refresh the very next day flipped the ranking, with GBM/LightGBM now
-  edging out random forest. Both are viable candidates; picking one as
-  "the" production model needs a decision, not just a number, given the
-  ranking has already moved once. A sequence-aware architecture (LSTM/GRU
-  + a learned `station_id` embedding) was researched but deferred rather
-  than built — see "Model selection rationale" for why — and remains the
-  option if the tree ensembles' ceiling ever needs breaking through.
+  single tree/SVM. **Production model: LightGBM** (`notebooks/
+  18_lightgbm_production_model.ipynb`, `models/production_lightgbm.joblib`,
+  decided 2026-08-22) — see that entry and the tech-stack history it
+  links for why: random forest (notebook 17's production config) was the
+  clear winner on the dataset available through 2026-08-21, but a
+  routine data refresh the very next day flipped the ranking, with
+  GBM/LightGBM edging out random forest; LightGBM and GBM were
+  essentially tied on accuracy, and LightGBM was chosen as architecturally
+  simpler to keep as the single production artifact (dramatically
+  smaller/faster to train than a tuned random-forest alternative that
+  could have reclaimed a narrow lead). A sequence-aware architecture
+  (LSTM/GRU + a learned `station_id` embedding) was researched but
+  deferred rather than built — see "Model selection rationale" for why
+  — and remains the option if the tree ensembles' ceiling ever needs
+  breaking through.
 - `matplotlib` / `plotly` for visualization
 - Streamlit for the live dashboard (`app.py`, `dashboard_common.py`, `pages/`)
 - `anthropic` SDK for the daily forecast-accuracy email's AI explanations
@@ -487,28 +491,49 @@ Before treating a step as done, check it from three angles:
     notebook write its metrics to a shared file instead of hardcoding
     cross-notebook constants — a real fix for a bug class that has now
     caused two separate incidents, not yet built).
-  - **Not yet resolved**: which model to actually ship as "the"
-    production config, now that the ranking has moved once already on a
-    routine data refresh. A follow-up re-measurement of notebook 16's
-    Section 7 hyperparameter sweep (also 2026-08-22, against the current
-    data) adds a relevant data point: random forest's reference/
-    production configs no longer lead, but a more aggressively-tuned
-    config (`max_samples=0.30, n_estimators=100, max_depth=18,
-    min_samples_leaf=5`) reaches MAE 10.475 - narrowly *ahead* of GBM
-    (10.483) again, though not quite matching LightGBM (10.461) - at a
-    real cost (~9x the reference config's serialized model size - fit-
-    time comparisons across sweep configs proved unreliable between
-    repeat runs, see notebook 16 Section 7), and not yet re-checked
-    per-station the way the reference
-    config was. So random forest *can* still lead with enough tuning;
-    it just no longer does so "for free" at the previously-recommended
-    settings. Candidates: keep random forest at a more aggressive
-    tuning (per above, if the size/time cost is acceptable), switch to
-    GBM/LightGBM (currently ahead at comparable cost, and architecturally
-    simpler/faster to train), or treat the fact that the ranking has
-    already moved once as a signal to compare models on a rolling basis
-    rather than picking one permanently. Needs a decision, not just more
-    numbers.
+  - **Resolved 2026-08-22: switched to LightGBM.** The question below
+    ("which model to actually ship") was open for a short while after
+    the ranking reversal above - kept here rather than deleted, since it
+    explains the tradeoffs that were actually weighed. A follow-up
+    re-measurement of notebook 16's Section 7 hyperparameter sweep (also
+    2026-08-22, against the current data) had added a relevant data
+    point: random forest's reference/production configs no longer lead,
+    but a more aggressively-tuned config (`max_samples=0.30,
+    n_estimators=100, max_depth=18, min_samples_leaf=5`) reaches MAE
+    10.475 - narrowly *ahead* of GBM (10.483) again, though not quite
+    matching LightGBM (10.461) - at a real cost (~9x the reference
+    config's serialized model size - fit-time comparisons across sweep
+    configs proved unreliable between repeat runs, see notebook 16
+    Section 7), and not re-checked per-station the way the reference
+    config was. So random forest *could* still lead with enough tuning;
+    it just no longer did so "for free" at the previously-recommended
+    settings. User's decision: **switch to LightGBM** (`notebooks/
+    18_lightgbm_production_model.ipynb`, `models/
+    production_lightgbm.joblib`) - essentially tied with GBM on accuracy
+    (10.461 vs. 10.483 MAE) but architecturally simpler to keep as the
+    single production artifact, and dramatically smaller/faster to train
+    than the tuned random-forest alternative (0.3MB vs. random forest's
+    42.8MB, ~6s fit vs. minutes). This also retired
+    `weekend_weekday_ratio` from the live inference path entirely
+    (`inference.py`, `dashboard_common.py`, `scripts/send_daily_email.py`,
+    `daily_report.py`) - that feature was only ever validated against
+    random forest (notebook 15's own scope), never against LightGBM, so
+    shipping it unvalidated with a different model class wasn't done;
+    `models/weekend_weekday_ratio.csv` and `production_random_forest.joblib`
+    were removed (not kept as a "rollback" hedge - `inference.FEATURE_COLS`
+    losing `weekend_weekday_ratio` means the old RF artifact couldn't be
+    fed by the changed `inference.py` in isolation anyway, so a real
+    rollback is "revert the commit," which git history already provides;
+    keeping a stale, already-incompatible 42.8MB binary around bought
+    nothing). A `FixedCategoryCaster` transformer
+    (`src/muenster_bike_forecast/modeling/lightgbm_features.py`) is baked
+    into the saved `Pipeline` so LightGBM's categorical-encoding
+    consistency requirement (same fixed categories at fit and predict
+    time) holds even for `inference.predict_24h_ahead`'s single-row
+    predictions - verified both by a dedicated unit test
+    (`tests/test_lightgbm_features.py`) and directly inside notebook 18
+    itself (single-row vs. batch prediction on a real test row, bit-
+    identical).
   - **Also added this session**: `_get_with_retry` exponential-backoff
     wrapper in `bike_counts.py` (5s base, doubling, 3 retries) around
     `list_stations`/`fetch_station_month`, specifically for this

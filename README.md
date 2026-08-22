@@ -63,7 +63,7 @@ streamlit run app.py
 
 Fetches live bike-count (od-ms/radverkehr-zaehlstellen) and weather (DWD
 Open Data) data at request time and runs the committed production model
-(`models/production_random_forest.joblib`) to forecast traffic 24h ahead
+(`models/production_lightgbm.joblib`) to forecast traffic 24h ahead
 for the selected station. No API keys or credentials needed. Deployed on
 [Streamlit Community Cloud](https://streamlit.io/cloud) from this public
 repo.
@@ -105,7 +105,7 @@ with these four variables exported).
   daily forecast-accuracy email)
 - `.github/workflows/` — scheduled CI (the daily email)
 - `models/` — mostly gitignored (regenerate from notebooks), except
-  `production_random_forest.joblib` and `weekend_weekday_ratio.csv`, which
-  are committed since the deployed dashboard needs them directly
+  `production_lightgbm.joblib`, which is committed since the deployed
+  dashboard needs it directly
 - `data/raw/` — raw downloaded data (gitignored, regenerate from notebooks)
 - `tests/` — unit tests

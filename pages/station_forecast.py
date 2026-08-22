@@ -20,8 +20,8 @@ from muenster_bike_forecast.data.bike_counts import BikeCountDataError
 st.title("📍 Station forecast")
 st.caption(
     "24h-ahead bike-traffic prediction per counting station, from live "
-    "bike-count and weather data. Production model: random forest, "
-    "MAE 27.14 / RMSE 53.71 on held-out data (see `notebooks/17_final_production_model.ipynb`)."
+    "bike-count and weather data. Production model: LightGBM, "
+    "MAE 10.46 / RMSE 17.99 on held-out data (see `notebooks/18_lightgbm_production_model.ipynb`)."
 )
 
 try:
