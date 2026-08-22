@@ -525,6 +525,118 @@ class _FakeResponse:
         self.close()
 
 
+# ---------------------------------------------------------------------------
+# _get_with_retry
+# ---------------------------------------------------------------------------
+
+
+def test_get_with_retry_returns_immediately_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = []
+    monkeypatch.setattr(
+        bike_counts.time, "sleep", lambda *a, **k: calls.append("sleep")
+    )
+    monkeypatch.setattr(bike_counts.requests, "get", lambda *a, **k: _FakeResponse(200))
+
+    response = bike_counts._get_with_retry("http://example.com", timeout=1.0)
+
+    assert response.status_code == 200
+    assert calls == []  # no retry needed, so no sleep
+
+
+def test_get_with_retry_retries_on_429_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sleeps: list[float] = []
+    monkeypatch.setattr(bike_counts.time, "sleep", lambda s: sleeps.append(s))
+    responses = iter([_FakeResponse(429), _FakeResponse(200)])
+    monkeypatch.setattr(bike_counts.requests, "get", lambda *a, **k: next(responses))
+
+    response = bike_counts._get_with_retry("http://example.com", timeout=1.0)
+
+    assert response.status_code == 200
+    assert sleeps == [bike_counts._RETRY_BASE_DELAY_SECONDS]
+
+
+def test_get_with_retry_does_not_retry_non_retryable_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = {"n": 0}
+
+    def fake_get(*args: object, **kwargs: object) -> "_FakeResponse":
+        calls["n"] += 1
+        return _FakeResponse(403)
+
+    monkeypatch.setattr(bike_counts.time, "sleep", lambda *a, **k: None)
+    monkeypatch.setattr(bike_counts.requests, "get", fake_get)
+
+    response = bike_counts._get_with_retry("http://example.com", timeout=1.0)
+
+    assert response.status_code == 403
+    assert calls["n"] == 1  # no retry on a non-retryable 4xx
+
+
+def test_get_with_retry_gives_up_after_max_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sleeps: list[float] = []
+    calls = {"n": 0}
+
+    def fake_get(*args: object, **kwargs: object) -> "_FakeResponse":
+        calls["n"] += 1
+        return _FakeResponse(429)
+
+    monkeypatch.setattr(bike_counts.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(bike_counts.requests, "get", fake_get)
+
+    response = bike_counts._get_with_retry(
+        "http://example.com", timeout=1.0, max_retries=3, base_delay=1.0
+    )
+
+    assert response.status_code == 429  # still-failing response returned, not raised
+    assert calls["n"] == 4  # first attempt + 3 retries
+    assert sleeps == [1.0, 2.0, 4.0]  # exponential backoff
+
+
+def test_get_with_retry_retries_on_connection_error_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(bike_counts.time, "sleep", lambda *a, **k: None)
+    attempts = iter([requests.ConnectionError("boom"), _FakeResponse(200)])
+
+    def fake_get(*args: object, **kwargs: object) -> "_FakeResponse":
+        result = next(attempts)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr(bike_counts.requests, "get", fake_get)
+
+    response = bike_counts._get_with_retry("http://example.com", timeout=1.0)
+
+    assert response.status_code == 200
+
+
+def test_get_with_retry_raises_after_exhausting_retries_on_connection_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(bike_counts.time, "sleep", lambda *a, **k: None)
+
+    def fake_get(*args: object, **kwargs: object) -> "_FakeResponse":
+        raise requests.ConnectionError("boom")
+
+    monkeypatch.setattr(bike_counts.requests, "get", fake_get)
+
+    with pytest.raises(requests.ConnectionError, match="boom"):
+        bike_counts._get_with_retry("http://example.com", timeout=1.0, max_retries=2)
+
+
+# ---------------------------------------------------------------------------
+# list_stations
+# ---------------------------------------------------------------------------
+
+
 def test_list_stations_uses_mocked_index(monkeypatch: pytest.MonkeyPatch) -> None:
     raw = [
         {
@@ -544,7 +656,10 @@ def test_list_stations_uses_mocked_index(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_list_stations_http_error_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(bike_counts.requests, "get", lambda *a, **k: _FakeResponse(500))
+    # 403 is deliberately not one of the retryable statuses (429/5xx), so
+    # this stays a fast, single-call test of "any HTTP error raises" -
+    # retry-specific behavior has its own dedicated tests below.
+    monkeypatch.setattr(bike_counts.requests, "get", lambda *a, **k: _FakeResponse(403))
     with pytest.raises(BikeCountDataError, match="Failed to fetch"):
         bike_counts.list_stations()
 

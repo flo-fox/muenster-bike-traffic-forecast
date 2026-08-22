@@ -21,6 +21,7 @@ from muenster_bike_forecast.modeling.model_table import (
     add_forecast_target,
     chronological_split,
     coalesce_channel_columns,
+    combined_channel_matches_directional_sum,
     compute_baseline_metrics,
     compute_total_count,
     identify_channel_count_columns,
@@ -71,13 +72,17 @@ def test_identify_channel_count_columns_ignores_non_count_columns() -> None:
 
 
 def _duplicate_channel_df() -> pd.DataFrame:
-    # Reproduces the real typo-rename scenario: channel 101's description
-    # changed mid-history, so the two columns are never both non-null for
-    # the same row - except the last row, added deliberately below to
-    # exercise the "both null" (missing data) case.
+    # Reproduces the real typo-rename scenario for the *combined* channel
+    # (id "101", matching this fixture's own station_id): its description
+    # changed mid-history, so the two "101" columns are never both
+    # non-null for the same row - except the last row, added deliberately
+    # to exercise the "both null" (missing data) case. Channel "102" is a
+    # directional sub-channel, present for realism but must be ignored by
+    # compute_total_count (which selects only the channel matching
+    # station_id).
     return pd.DataFrame(
         {
-            "station_id": ["S1"] * 4,
+            "station_id": ["101"] * 4,
             "datetime": pd.to_datetime(
                 [
                     "2024-01-01 00:00",
@@ -116,24 +121,31 @@ def test_coalesce_channel_columns_raises_on_missing_column() -> None:
         coalesce_channel_columns(df, ["a", "does_not_exist"])
 
 
-def test_compute_total_count_does_not_double_count_duplicate_channel() -> None:
-    # Naively summing every count-shaped column would give
-    # row0 = 5 + None(->0) + 1 = 6 by luck, but row1 would double if both
-    # duplicate columns were summed as separate channels (7 + 2 = 9 is
-    # correct; a naive "sum all count columns" approach would also give 9
-    # here since only one duplicate column is non-null per row - the real
-    # risk this guards against is a channel counted twice when *coalescing*
-    # is skipped entirely; the key correctness property is that coalescing
-    # happens *before* the cross-channel sum).
+def test_compute_total_count_selects_combined_channel_and_ignores_directional() -> None:
+    # compute_total_count no longer sums channels - it selects the
+    # combined channel (id matching station_id) directly, coalescing that
+    # channel's own duplicate-description columns (the real mid-history
+    # rename scenario) but ignoring unrelated directional channels
+    # entirely. Channel "102" here (values [1, 2, 3, None]) would have
+    # been wrongly folded in by the old sum-based behavior - it must not
+    # affect the result at all now.
     df = _duplicate_channel_df()
 
-    total = compute_total_count(df)
+    total = compute_total_count(df, station_id="101")
 
-    assert list(total.iloc[:3]) == [6.0, 9.0, 3.0]
+    assert total.iloc[0] == 5.0
+    assert total.iloc[1] == 7.0
+    assert pd.isna(total.iloc[2])
     assert pd.isna(total.iloc[3])
 
 
-def test_compute_total_count_min_count_one_keeps_all_null_row_as_nan() -> None:
+def test_compute_total_count_accepts_int_station_id() -> None:
+    df = _duplicate_channel_df()
+    total = compute_total_count(df, station_id=101)
+    assert total.iloc[0] == 5.0
+
+
+def test_compute_total_count_selected_channel_keeps_null_rows_as_nan() -> None:
     df = pd.DataFrame(
         {
             "101 (a)": [None, 1.0],
@@ -141,16 +153,113 @@ def test_compute_total_count_min_count_one_keeps_all_null_row_as_nan() -> None:
         }
     )
 
-    total = compute_total_count(df)
+    total = compute_total_count(df, station_id="101")
 
     assert pd.isna(total.iloc[0])
-    assert total.iloc[1] == 3.0
+    assert total.iloc[1] == 1.0
 
 
 def test_compute_total_count_raises_when_no_count_columns() -> None:
     df = pd.DataFrame({"station_id": ["S1"], "datetime": [pd.Timestamp("2024-01-01")]})
     with pytest.raises(ModelTableError):
-        compute_total_count(df)
+        compute_total_count(df, station_id="S1")
+
+
+def test_compute_total_count_raises_when_no_channel_matches_station_id() -> None:
+    df = pd.DataFrame({"101 (a)": [1.0]})
+    with pytest.raises(ModelTableError):
+        compute_total_count(df, station_id="999")
+
+
+# ---------------------------------------------------------------------------
+# combined_channel_matches_directional_sum
+# ---------------------------------------------------------------------------
+
+
+def _combined_plus_directional_df() -> pd.DataFrame:
+    # Reproduces the real "Neutor" pattern confirmed 2026-08-21: the
+    # combined channel (id "100035541") already equals the sum of its two
+    # directional channels for the first two rows; the third row is a
+    # deliberate mismatch (to prove the check can fail, not just pass);
+    # the fourth row has no directional data at all (a gap), which must
+    # read as "nothing to check", not "mismatch".
+    return pd.DataFrame(
+        {
+            "100035541 (Neutor)": [4, 7, 99, 5],
+            "101035541 (Neutor stadteinwärts)": [1, 5, 1, None],
+            "102035541 (Neutor stadtauswärts)": [3, 2, 1, None],
+        }
+    )
+
+
+def test_combined_channel_matches_directional_sum_confirms_real_pattern() -> None:
+    df = _combined_plus_directional_df()
+
+    result = combined_channel_matches_directional_sum(df, station_id="100035541")
+
+    assert bool(result.iloc[0]) is True  # 4 == 1 + 3
+    assert bool(result.iloc[1]) is True  # 7 == 5 + 2
+    assert bool(result.iloc[2]) is False  # 99 != 1 + 1
+    assert result.iloc[3] is pd.NA  # no directional data to compare against
+
+
+def test_combined_channel_matches_directional_sum_accepts_int_station_id() -> None:
+    df = _combined_plus_directional_df()
+    result = combined_channel_matches_directional_sum(df, station_id=100035541)
+    assert bool(result.iloc[0]) is True
+
+
+def test_combined_channel_matches_directional_sum_null_combined_is_not_checked() -> (
+    None
+):
+    df = pd.DataFrame(
+        {
+            "1 (combined)": [None],
+            "2 (dir a)": [3.0],
+            "3 (dir b)": [4.0],
+        }
+    )
+    result = combined_channel_matches_directional_sum(df, station_id="1")
+    assert result.iloc[0] is pd.NA
+
+
+def test_combined_channel_matches_directional_sum_partial_directional_gap_is_a_known_limitation() -> (
+    None
+):
+    # Pins a documented, accepted limitation (see the function's Returns
+    # docstring): a *partial* directional gap (one of two channels null,
+    # the other present) is NOT detected as "nothing to check" - it's
+    # scored as a disagreement instead, because requiring every
+    # directional column non-null would break multi-generation stations
+    # (several reissued-channel-id columns are null outside their own
+    # vintage on every row, not just gap rows). This test exists so a
+    # future change to this behavior is a deliberate decision, not an
+    # accidental one.
+    df = pd.DataFrame(
+        {
+            "1 (combined)": [10.0],
+            "2 (dir a)": [None],  # a genuine gap on this one channel
+            "3 (dir b)": [4.0],
+        }
+    )
+    result = combined_channel_matches_directional_sum(df, station_id="1")
+    assert bool(result.iloc[0]) is False  # not pd.NA, despite the real gap
+
+
+def test_combined_channel_matches_directional_sum_raises_when_no_combined_channel() -> (
+    None
+):
+    df = pd.DataFrame({"2 (dir a)": [1.0], "3 (dir b)": [2.0]})
+    with pytest.raises(ModelTableError):
+        combined_channel_matches_directional_sum(df, station_id="1")
+
+
+def test_combined_channel_matches_directional_sum_raises_when_no_directional_channels() -> (
+    None
+):
+    df = pd.DataFrame({"1 (combined)": [5.0]})
+    with pytest.raises(ModelTableError):
+        combined_channel_matches_directional_sum(df, station_id="1")
 
 
 # ---------------------------------------------------------------------------

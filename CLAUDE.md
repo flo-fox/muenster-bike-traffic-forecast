@@ -16,15 +16,17 @@ regression experiments. Goal here is an actual, active forecasting tool.
   notebook 11) as a first neural-net pass, `RandomForestRegressor` (sklearn,
   notebook 14) as a fourth tree-based class — see "Model selection
   rationale" below for why these were tried and not linear regression/a
-  single tree/SVM, and for the random-forest result. Random forest is the
-  best model class tried; the actual best-tried *configuration* is
-  notebook 17's production model (base random forest + notebook 15's
-  `weekend_weekday_ratio` feature + a tuned `max_samples`), currently the
-  recommended approach — see "Model selection rationale" for both. A
-  sequence-aware architecture (LSTM/GRU + a learned `station_id`
-  embedding) was researched but deferred rather than built — see "Model
-  selection rationale" for why — and remains the option if the tree
-  ensembles' ceiling ever needs breaking through.
+  single tree/SVM. **No single model class is currently the settled
+  "best" pick** — see the 2026-08-22 entry in "Model selection rationale"
+  for why: random forest (notebook 17's production config) was the clear
+  winner on the dataset available through 2026-08-21, but a routine data
+  refresh the very next day flipped the ranking, with GBM/LightGBM now
+  edging out random forest. Both are viable candidates; picking one as
+  "the" production model needs a decision, not just a number, given the
+  ranking has already moved once. A sequence-aware architecture (LSTM/GRU
+  + a learned `station_id` embedding) was researched but deferred rather
+  than built — see "Model selection rationale" for why — and remains the
+  option if the tree ensembles' ceiling ever needs breaking through.
 - `matplotlib` / `plotly` for visualization
 - Streamlit for the live dashboard (`app.py`, `dashboard_common.py`, `pages/`)
 - `anthropic` SDK for the daily forecast-accuracy email's AI explanations
@@ -59,36 +61,43 @@ underlying data patterns referenced here:
   station's start of coverage) and native categorical support
   (`station_id`, `hour`, `day_of_week`, …) with no manual encoding, scale
   to 2.3M rows without subsampling, and tree splits capture the
-  interaction/threshold effects above automatically. Result: near-tied
-  (28.57 vs. 28.56 MAE overall) — the choice between these two barely
-  matters for this problem.
+  interaction/threshold effects above automatically. **Result (current,
+  post-2026-08-22 data refresh): near-tied, LightGBM very slightly ahead**
+  (MAE 10.46 vs. 10.48, RMSE 17.99 vs. 18.09) — the choice between these
+  two still barely matters for this problem, and — new since the
+  2026-08-21 double-counting fix — **this pair now edges out random
+  forest** (see that entry below and the 2026-08-22 "Planned additions"
+  entry for the full story).
 - **Prophet** (tried): a genuinely different approach (explicit additive
   seasonal decomposition, one model per station) rather than another tree
   ensemble, specifically to test whether per-station fitting handles the
   regime-shift station (`300038855`) better than one global tree model
-  that shares structure across all 23 stations. Result (notebook 10):
-  **worse than both alternatives** (overall MAE 54.30/RMSE 92.01, vs.
-  39.34/77.25 baseline and 28.57/54.53 GBM) — including on the two
-  flagged stations, which get *worse* under Prophet, not better. Likely
-  cause: Prophet never sees the current `total_count` reading as an
-  input (it's a pure trend/seasonality extrapolator), while both the
-  baseline and GBM directly exploit it as their single strongest signal.
+  that shares structure across all 23 stations. Result (notebook 10,
+  current numbers): **worse than both alternatives** (overall MAE
+  21.96/RMSE 35.36, vs. 16.66/31.11 baseline and 10.48/18.09 GBM) —
+  including on several individual stations, which get *much* worse under
+  Prophet (worst: `300037932` -180%, `300038855` -146%, `300037405`
+  -117% vs. baseline). Likely cause: Prophet never sees the current
+  `total_count` reading as an input (it's a pure trend/seasonality
+  extrapolator), while both the baseline and GBM directly exploit it as
+  their single strongest signal.
 - **MLPRegressor** (tried, notebook 11): a first neural-net pass, per
   user request — sklearn's `MLPRegressor` on the identical feature set,
   with an explicit preprocessing pipeline (median imputation +
   standardization for numeric features, one-hot encoding for
   categoricals) since, unlike the tree models, it has no native
-  missing-value or categorical support. Result: MAE 28.57 essentially
-  tied with GBM (28.57) and LightGBM (28.56), RMSE 55.57 slightly worse
-  than both (~54.5) — bigger occasional misses despite a comparable
-  typical-case error. Does not fix either flagged station cleanly: worse
-  than both trees on the mild regression (`300037405`, -16.5% vs.
-  baseline vs. their ~-8%), modestly better than both trees but still far
-  from the baseline on the severe regime-shift station (`300038855`,
-  +4-7% over the trees, still -102% vs. baseline). Confirms the same
-  conclusion as the tree-vs-Prophet comparison: this data's structure is
-  already well captured by tree splits, so a first-pass neural net adds
-  preprocessing/tuning overhead without a performance gain.
+  missing-value or categorical support. **Result (current)**: MAE 10.80,
+  a real (not noise-level) ~3% behind GBM (10.48) and LightGBM (10.46),
+  RMSE 18.77 similarly ~4% behind both — bigger occasional misses on top
+  of a somewhat worse typical-case error. Notably reverses its earlier
+  (pre-refresh) flagged-station finding: MLP now *beats* the baseline on
+  both previously-flagged stations (`300037405` +32.9%, `300038855`
+  +35.7%) rather than regressing on one of them — see the 2026-08-22
+  "Planned additions" entry on why several per-station results moved
+  this much with the data refresh. Still not competitive enough overall
+  to change the "tree splits already capture this data's structure"
+  conclusion — a first-pass neural net still adds preprocessing/tuning
+  overhead without a performance gain here.
 - **Random forest** (tried, notebook 14): a fourth tree-based class,
   `sklearn.ensemble.RandomForestRegressor` on the identical feature set
   and chronological holdout as 08/09/11 — the last open item from this
@@ -100,40 +109,43 @@ underlying data patterns referenced here:
   trees on ~2.16M rows are memory-bandwidth-bound in a way the
   histogram-binned GBM/LightGBM aren't, so parallel speedup across cores
   fell short of expectations. `max_samples=0.15` bootstrap subsampling
-  cut the actual fit to 91.4s. **Result: the best model tried so far** —
-  MAE 27.34/RMSE 54.13 overall, vs. 28.57/54.53 (GBM), 28.56/54.44
-  (LightGBM), 28.57/55.57 (MLP) — a real ~4.3% MAE improvement, not a
-  near-tie like the other three are with each other. Per-station, it
-  improves on the baseline for 22 of 23 stations (the most consistent of
-  any model tried), including a large apparent win on `300038855` — but
-  notebook 12 (run in parallel) subsequently found that station's test
-  window is ~90% sensor-gap-or-all-zero artifact, not real traffic, so
-  that specific win is likely a near-zero prediction scoring well against
-  a corrupted near-zero target rather than genuine regime-shift
-  robustness; treat it with the same caution as the smaller, less
-  artifact-prone win on the other flagged station (`300037405`, +14.8%
-  vs. baseline).
+  fixed that. **Result (current, base config): no longer the best model
+  tried** — MAE 10.93/RMSE 19.04 overall, vs. 10.48/18.09 (GBM) and
+  10.46/17.99 (LightGBM) — GBM now beats base random forest on 21 of 23
+  stations. The tuned production config (notebook 17: `max_samples=0.30`
+  + `weekend_weekday_ratio`, MAE 10.73/RMSE 18.62) narrows the gap but
+  GBM still wins on 18 of 23 stations. This is a **reversal** of the
+  finding that held through 2026-08-21 (random forest clearly best,
+  ~4-5% MAE edge over GBM) — see the 2026-08-22 "Planned additions"
+  entry for the fresh-data-refresh context and why this isn't yet being
+  treated as fully settled either way. What *is* still robust: per-station,
+  random forest improves on the baseline for 23 of 23 stations (up from
+  22/23) — the most consistent of any model tried, including on the two
+  previously-flagged stations (`300038855`, `300037405`), where notebook
+  12 traced the earlier "regime shift" to a sensor-outage artifact rather
+  than real traffic change.
 - **Sequence-aware architecture (LSTM/GRU + `station_id` embedding)**:
   researched, not built — deferred rather than left simply unconsidered.
-  Three structurally different model classes tried so far (GBM,
-  LightGBM, MLP) converge to within ~0.05 MAE of each other (28.56-
-  28.57), and GBM's permutation importance (notebook 08) drops off
-  sharply after the top handful of features (`total_count`, `day_of_week`,
-  `hour`, `station_id`, `lag_1w`, `rolling_mean_2h`, roughly a 3.7x cliff
-  down to the next feature, `lag_1d`) — together read as the current
-  lag/rolling feature set approaching a noise floor rather than being
-  under-exploited by any one model class. (Prophet's much worse score,
-  54.30 MAE, doesn't fit this convergence story — see above, it's
+  Three structurally different model classes (GBM, LightGBM, MLP)
+  converge to within a few percent of each other, and GBM's permutation
+  importance (notebook 08, current numbers) drops off after the top
+  handful of features (`total_count`, `day_of_week`, `hour`,
+  `station_id`, `rolling_mean_2h`, `lag_1w`, `lag_1d`, roughly a 3.5x
+  cliff down to the next feature, `rolling_mean_24h`) — together read as
+  the current lag/rolling feature set approaching a noise floor rather
+  than being under-exploited by any one model class. (Prophet's much
+  worse score doesn't fit this convergence story — see above, it's
   explained separately by never seeing `total_count` as an input.)
   Reshaping ~2.3M flat rows into per-station sequences — handling real
   per-station gaps and differing coverage-start dates — was judged a
   bigger lift than notebooks 08-14 combined, so it was deprioritized
-  rather than attempted. Random forest's subsequent ~4.3% MAE gain
-  (notebook 14) shows some headroom still exists within the current
-  feature set via a different bias-variance tradeoff, which doesn't
-  overturn the deferral but is worth noting against the "noise floor"
-  framing. If ever revisited: PyTorch over Keras/TensorFlow, a GRU/LSTM
-  with a learned `station_id` embedding.
+  rather than attempted. Random forest's edge over GBM has since
+  reversed (see above) rather than persisted, which weakens (but doesn't
+  eliminate) the "some headroom exists via a different bias-variance
+  tradeoff" argument for revisiting this deferral - the tree-ensemble
+  field is now genuinely closer to a three-way near-tie (GBM, LightGBM,
+  RF) than a settled random-forest lead. If ever revisited: PyTorch over
+  Keras/TensorFlow, a GRU/LSTM with a learned `station_id` embedding.
 
 ## Data sources
 - **Bike counts**: GitHub repo `od-ms/radverkehr-zaehlstellen` — 15-minute
@@ -366,18 +378,149 @@ Before treating a step as done, check it from three angles:
     with the user; `ANTHROPIC_API_KEY` needs its own
     console.anthropic.com account/billing, set as a GitHub Actions
     secret alongside the three Gmail/recipient secrets (see README.md).
-  - **Rate-limit exposure accepted, not mitigated**: fleet-wide scope
-    (23 stations × ~2 months per run ≈ 46 requests to
+  - **Rate-limit exposure, partially mitigated since 2026-08-21**:
+    fleet-wide scope (23 stations × ~2 months per run ≈ 46 requests to
     `raw.githubusercontent.com`) hits the same unthrottled source the
     dashboard does, which has previously shown real HTTP 429s under
-    repeated fetching. No retry/backoff was added (would be speculative
-    scope beyond what was asked); mitigation is limited to a per-station
-    `SCRIPT_FETCH_ERRORS` catch (skip and continue, same pattern as
+    repeated fetching. At the time this was written, no retry/backoff
+    existed and none was added here deliberately (would have been
+    speculative scope beyond what was asked); `bike_counts.py` later
+    gained a real one (`_get_with_retry`, added 2026-08-21 for the
+    double-counting-fix retrain's own unattended live fetch — see that
+    entry below), and since `list_stations`/`fetch_station_month` are
+    the same functions this script calls, the daily email now inherits
+    that retry/backoff automatically, without any change needed here.
+    Remaining mitigation, unchanged: a per-station `SCRIPT_FETCH_ERRORS`
+    catch (skip and continue, same pattern as
     `dashboard_common.build_fleet_snapshot`) plus a small 0.2s courtesy
     delay between station fetches.
   - **Top-5-by-absolute-error default** (`daily_report.TOP_N_DEVIATIONS`)
     — user-confirmed, but arbitrary; revisit if 5 turns out too many/few
     once real emails start arriving.
+- **`total_count` double-counting bug found, fixed, and the full model
+  chain retrained (2026-08-21/22, `fix/channel-double-counting` branch)**:
+  a user manually cross-checking a dashboard number (Neutor: 146) against
+  its raw channel CSV found it was exactly double a plausible value.
+  Root cause: `compute_total_count` summed a station's "combined" channel
+  (numeric id == `station_id`) *on top of* its own directional
+  sub-channels, which already equal it — confirmed systemic across **all
+  23 stations, 100% match, zero exceptions**, via a new read-only
+  diagnostic (`combined_channel_matches_directional_sum`). Fix, per
+  explicit user instruction ("use the first column"): `compute_total_count`
+  now selects the combined channel directly via `coalesce_channel_columns`
+  rather than summing (`fece051`); `inference.py`'s call site updated to
+  match. Same session, at the user's request, added a new "Inbound vs.
+  outbound imbalance" section to notebook 07 (`compute_directional_totals`
+  in `analysis/descriptive.py`) — Weseler Straße's ~28% imbalance is the
+  standout; Kanalpromenade Abschnitt 6 (~62%) and Bismarckallee (~7%) are
+  flagged unreliable (concurrent-channel-overlap and mid-history
+  relabeling issues respectively, not fixed, honestly documented
+  instead). Gasselstiege's specific percentage originally quoted here
+  (~50%) was corrected 2026-08-22 - the current, correctly-computed
+  figure is ~0.1% (essentially balanced), not ~50%; the earlier number
+  was a transcription error from before this session's live-data
+  refresh, not a change in the underlying data. The methodological
+  caveat (concurrent, not sequential, channel generations at this
+  station - see `compute_directional_totals`'s docstring) still applies
+  and still means any single number quoted for this station, including
+  this corrected one, should be treated with the same caution as before.
+
+  The retrain that followed was explicitly two-staged, per the user's
+  request, to isolate cause from coincidence:
+
+  - **Stage 1** (`42b4b13`, `8d18184`): re-ran notebooks 08-17 against
+    the already-corrected `model_table.csv`, with **no new data
+    fetched** — isolating the fix's effect alone. Every model's MAE/RMSE
+    dropped by very close to half (baseline 39.34 → 19.67; confirmed via
+    independent audit that the old/new per-station baseline-MAE ratio
+    was **exactly 0.5000 for all 23 stations**, not just "roughly half"
+    in aggregate) — expected, since the bug was double-counting the
+    target for every affected station uniformly. The model ranking held:
+    random forest still best (notebook 17 production config: MAE
+    13.56/RMSE 26.83, a ~6.4% MAE edge over GBM's 14.49; the base
+    random-forest config, notebook 14, MAE 13.71, edges GBM by ~5.4%,
+    up slightly from the pre-fix ~4.3%) — GBM/LightGBM near-tied, MLP
+    tied with GBM on MAE but worse RMSE, Prophet clearly worst. This
+    retrain also surfaced (and
+    fixed) a much bigger-than-previously-documented case of the
+    "hardcoded cross-notebook reference constant" staleness pattern
+    already noted below under the 2026-08-17 embargo entry: after the
+    2x-rescale, notebooks 09/10/11/14/15/16's hardcoded "reference"
+    MAE/RMSE constants (both overall and per-station) were off by
+    40-55 percentage points, not sub-1% — e.g. notebook 16 was printing
+    "RF beats GBM on 23 of 23 stations" with a fabricated ~49% margin
+    (true margin then ~5%), and notebook 10 made Prophet look
+    competitive with GBM (actually ~90% worse). All fixed by
+    programmatically extracting fresh ground truth from each source
+    notebook's own already-executed output (no retraining, no
+    transcription risk) rather than hand-typing corrected numbers.
+  - **Stage 2** (`567d496`, `ee715ca`): re-fetched live data (notebooks
+    01/02, ~2-3 more months since the last fetch, using the new
+    `_get_with_retry` backoff below) and re-ran the entire chain 01-17.
+    Surfaced a real, previously-latent bug: notebook 03's station-file
+    glob crashed on `station_locations.csv` (its `NON_STATION_FILES`
+    denylist predated that file, added 2026-07-24) — fixed with a
+    positive match on the numeric station-id filename convention
+    instead of an ever-growing denylist. **Significant, independently-
+    verified finding: on this larger/fresher dataset, the model ranking
+    partially reversed** — GBM (MAE 10.48) and LightGBM (10.46) now both
+    edge out random forest (production config 10.73, base config
+    10.93); GBM beats even the tuned production RF config on 18 of 23
+    stations. Random forest's per-station consistency actually
+    *improved* (beats baseline on 23/23 stations now, up from 22/23),
+    just no longer with the lowest aggregate error. Two independent
+    `bike-data-scientist-auditor` passes confirmed this is real (fair
+    apples-to-apples comparison — identical train/test rows, features,
+    `random_state` — and broad across stations, not a 1-2 station
+    artifact), not a bug. **This directly contradicts the "Model
+    selection rationale" section's and this file's tech-stack bullet's
+    prior claim that random forest is simply "the best model" — both
+    have been updated to reflect that no single model class is
+    currently the settled winner.** The stale-hardcoded-reference-
+    constant issue recurred for Stage 2's fresh numbers (same root
+    cause as Stage 1's, not re-fixed a second time given the scale of
+    manual work already spent) — every number in this entry and in the
+    "Model selection rationale" section above was pulled directly from
+    each notebook's own trained-model output, not from any notebook's
+    own "vs. GBM"-style comparison table, which should not be trusted
+    until that architectural gap is closed (e.g. by having each
+    notebook write its metrics to a shared file instead of hardcoding
+    cross-notebook constants — a real fix for a bug class that has now
+    caused two separate incidents, not yet built).
+  - **Not yet resolved**: which model to actually ship as "the"
+    production config, now that the ranking has moved once already on a
+    routine data refresh. A follow-up re-measurement of notebook 16's
+    Section 7 hyperparameter sweep (also 2026-08-22, against the current
+    data) adds a relevant data point: random forest's reference/
+    production configs no longer lead, but a more aggressively-tuned
+    config (`max_samples=0.30, n_estimators=100, max_depth=18,
+    min_samples_leaf=5`) reaches MAE 10.475 - narrowly *ahead* of GBM
+    (10.483) again, though not quite matching LightGBM (10.461) - at a
+    real cost (~9x the reference config's serialized model size - fit-
+    time comparisons across sweep configs proved unreliable between
+    repeat runs, see notebook 16 Section 7), and not yet re-checked
+    per-station the way the reference
+    config was. So random forest *can* still lead with enough tuning;
+    it just no longer does so "for free" at the previously-recommended
+    settings. Candidates: keep random forest at a more aggressive
+    tuning (per above, if the size/time cost is acceptable), switch to
+    GBM/LightGBM (currently ahead at comparable cost, and architecturally
+    simpler/faster to train), or treat the fact that the ranking has
+    already moved once as a signal to compare models on a rolling basis
+    rather than picking one permanently. Needs a decision, not just more
+    numbers.
+  - **Also added this session**: `_get_with_retry` exponential-backoff
+    wrapper in `bike_counts.py` (5s base, doubling, 3 retries) around
+    `list_stations`/`fetch_station_month`, specifically for this
+    retrain's unattended live fetch — closes discarded retryable-status
+    responses to avoid leaking sockets, per code review. Two new
+    on-demand review subagents: `bike-data-auditor` (cross-checks
+    displayed numbers against raw source data — the role a human did
+    manually to catch this whole bug) and `bike-data-scientist-auditor`
+    (independently re-derives modeling methodology — leakage, fair
+    baselines, metric correctness, effect size vs. noise; used
+    extensively during this retrain to verify the ranking reversal
+    above). Both on-demand only, not wired into any hook.
 
 ## What Claude should avoid
 - Do not add speculative features beyond what is asked.
