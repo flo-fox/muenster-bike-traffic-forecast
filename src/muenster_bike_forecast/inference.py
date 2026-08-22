@@ -1,7 +1,7 @@
 """Live 24h-ahead forecasting: turns freshly fetched data into a prediction.
 
-This module assembles exactly the feature row `notebooks/17_final_production_model.ipynb`
-trained `models/production_random_forest.joblib` on, but from a short recent
+This module assembles exactly the feature row `notebooks/18_lightgbm_production_model.ipynb`
+trained `models/production_lightgbm.joblib` on, but from a short recent
 window of live data rather than the full historical `model_table.csv`. Its
 functions are pure transforms over already-fetched DataFrames; fetching the
 raw bike-count/weather/calendar data (via `data.bike_counts`, `data.weather`,
@@ -10,7 +10,7 @@ Streamlit app), consistent with this project's convention of keeping I/O out
 of reusable transform code.
 
 `FEATURE_COLS` (and the `LAG_SPECS`/`ROLLING_SPECS`/`NUMERIC_FEATURES`/
-`CATEGORICAL_FEATURES` it is built from) must stay in sync with notebook 17's
+`CATEGORICAL_FEATURES` it is built from) must stay in sync with notebook 18's
 own definitions — they are duplicated here because notebooks are not
 importable modules. If the production model is ever retrained with a
 different feature set, update both places.
@@ -27,9 +27,6 @@ import pandas as pd
 from muenster_bike_forecast.data.join import (
     join_station_weather,
     localize_bike_timestamps,
-)
-from muenster_bike_forecast.modeling.feature_followups import (
-    add_weekend_weekday_ratio_feature,
 )
 from muenster_bike_forecast.modeling.lag_features import (
     add_lag_feature,
@@ -67,7 +64,6 @@ NUMERIC_FEATURES: Final[list[str]] = [
     "weather_precipitation_mm",
     "weather_wind_speed_ms",
     *HISTORY_FEATURE_COLS,
-    "weekend_weekday_ratio",
 ]
 FEATURE_COLS: Final[list[str]] = NUMERIC_FEATURES + CATEGORICAL_FEATURES
 
@@ -127,17 +123,15 @@ def assemble_feature_history(
     weather_wide_df: pd.DataFrame,
     public_holidays_df: pd.DataFrame,
     school_holidays_df: pd.DataFrame,
-    ratio_table: pd.DataFrame,
 ) -> pd.DataFrame:
     """Builds the full `FEATURE_COLS` history for one station's recent data.
 
     Mirrors, for a short live window, exactly what
     ``notebooks/06_baseline_model.ipynb``'s ``_load_station_slim`` plus
-    notebooks 08-17's lag/rolling/calendar/ratio steps do for the full
+    notebooks 08-18's lag/rolling/calendar steps do for the full
     historical table: coalesce+sum count channels into `total_count`,
-    as-of join hourly weather, add lag/rolling history features, add
-    calendar features, and broadcast the static per-station
-    `weekend_weekday_ratio`.
+    as-of join hourly weather, add lag/rolling history features, and add
+    calendar features.
 
     Args:
         raw_bike_df: One station's raw rows, as returned by
@@ -152,9 +146,6 @@ def assemble_feature_history(
         public_holidays_df: As returned by `data.calendar.public_holidays`.
         school_holidays_df: As returned by
             `data.calendar.fetch_school_holidays`/`load_school_holidays`.
-        ratio_table: Static per-station `weekend_weekday_ratio` lookup, as
-            returned by `modeling.feature_followups.compute_weekend_weekday_ratio`
-            or loaded from the committed ``models/weekend_weekday_ratio.csv``.
 
     Returns:
         DataFrame with columns ``station_id``, ``datetime``, and every
@@ -165,12 +156,11 @@ def assemble_feature_history(
         the training pipeline handles the same near-start-of-coverage case.
 
     Raises:
-        InferenceError: if `raw_bike_df` is empty, its `station_id` values
-            cannot be cast to `int64` (the source repo's station ids are
-            validated as filename-safe but not as numeric - and not as
+        InferenceError: if `raw_bike_df` is empty, or its `station_id`
+            values cannot be cast to `int64` (the source repo's station ids
+            are validated as filename-safe but not as numeric - and not as
             bounded, so an all-digit id can still overflow `int64` - so a
-            non-numeric or out-of-range id would otherwise crash here), or
-            its station has no matching row in `ratio_table`.
+            non-numeric or out-of-range id would otherwise crash here).
     """
     if raw_bike_df.empty:
         raise InferenceError(
@@ -209,14 +199,6 @@ def assemble_feature_history(
         )
 
     slim = add_calendar_features(slim, public_holidays_df, school_holidays_df)
-
-    try:
-        slim = add_weekend_weekday_ratio_feature(slim, ratio_table)
-    except Exception as exc:  # noqa: BLE001 - re-raised as this module's own error type
-        raise InferenceError(
-            f"Could not attach weekend_weekday_ratio for station "
-            f"{working['station_id'].iloc[0]!r}: {exc}"
-        ) from exc
 
     return slim.sort_values("datetime").reset_index(drop=True)
 
@@ -419,7 +401,7 @@ def predict_24h_ahead(model: object, feature_row: pd.Series) -> float:
     Args:
         model: A fitted scikit-learn `Pipeline` (or any object exposing
             `.predict`), as loaded from
-            ``models/production_random_forest.joblib``.
+            ``models/production_lightgbm.joblib``.
         feature_row: A row containing at least every column in
             `FEATURE_COLS`, e.g. as returned by `latest_feature_row`.
 

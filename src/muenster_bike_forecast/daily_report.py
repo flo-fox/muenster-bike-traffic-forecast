@@ -244,7 +244,6 @@ class StationAccuracyReport:
 def build_station_report(
     station: Station,
     model: object,
-    ratio_table: pd.DataFrame,
     public_holidays_df: pd.DataFrame,
     school_holidays_df: pd.DataFrame,
     weather_wide_df: pd.DataFrame,
@@ -263,8 +262,7 @@ def build_station_report(
         station: The station to report on.
         model: A fitted scikit-learn `Pipeline` (or any object exposing
             `.predict`), as loaded from
-            `models/production_random_forest.joblib`.
-        ratio_table: Static per-station `weekend_weekday_ratio` lookup.
+            `models/production_lightgbm.joblib`.
         public_holidays_df: As returned by `data.calendar.public_holidays`.
         school_holidays_df: As returned by `data.calendar.fetch_school_holidays`.
         weather_wide_df: Combined hourly weather, as returned by
@@ -289,7 +287,6 @@ def build_station_report(
         weather_wide_df,
         public_holidays_df,
         school_holidays_df,
-        ratio_table,
     )
     now_row = inference.latest_feature_row(history, station.station_id)
     now_datetime = now_row["datetime"]

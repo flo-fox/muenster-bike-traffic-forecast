@@ -76,10 +76,6 @@ def _school_holidays_df() -> pd.DataFrame:
     )
 
 
-def _ratio_table(station_id: int = STATION_ID, ratio: float = 0.65) -> pd.DataFrame:
-    return pd.DataFrame({"station_id": [station_id], "weekend_weekday_ratio": [ratio]})
-
-
 # ---------------------------------------------------------------------------
 # assemble_feature_history
 # ---------------------------------------------------------------------------
@@ -90,7 +86,7 @@ def test_assemble_feature_history_computes_total_count_and_features() -> None:
     weather = _weather_wide_df(raw["datetime"])
 
     out = assemble_feature_history(
-        raw, weather, _public_holidays_df(), _school_holidays_df(), _ratio_table()
+        raw, weather, _public_holidays_df(), _school_holidays_df()
     )
 
     assert list(out["total_count"]) == [10.0, 20.0, 30.0]
@@ -108,7 +104,7 @@ def test_assemble_feature_history_attaches_weather_with_prefix() -> None:
     weather = _weather_wide_df(raw["datetime"])
 
     out = assemble_feature_history(
-        raw, weather, _public_holidays_df(), _school_holidays_df(), _ratio_table()
+        raw, weather, _public_holidays_df(), _school_holidays_df()
     )
 
     assert list(out["weather_air_temperature_c"]) == [15.0, 16.0, 17.0]
@@ -119,7 +115,7 @@ def test_assemble_feature_history_casts_station_id_to_match_training_dtype() -> 
     weather = _weather_wide_df(raw["datetime"])
 
     out = assemble_feature_history(
-        raw, weather, _public_holidays_df(), _school_holidays_df(), _ratio_table()
+        raw, weather, _public_holidays_df(), _school_holidays_df()
     )
 
     assert out["station_id"].dtype == np.dtype("int64")
@@ -133,7 +129,6 @@ def test_assemble_feature_history_raises_on_empty_input() -> None:
             _weather_wide_df(pd.Series(dtype="datetime64[ns]")),
             _public_holidays_df(),
             _school_holidays_df(),
-            _ratio_table(),
         )
 
 
@@ -148,7 +143,7 @@ def test_assemble_feature_history_raises_on_non_numeric_station_id() -> None:
 
     with pytest.raises(InferenceError):
         assemble_feature_history(
-            raw, weather, _public_holidays_df(), _school_holidays_df(), _ratio_table()
+            raw, weather, _public_holidays_df(), _school_holidays_df()
         )
 
 
@@ -161,23 +156,7 @@ def test_assemble_feature_history_raises_on_out_of_range_numeric_station_id() ->
 
     with pytest.raises(InferenceError):
         assemble_feature_history(
-            raw, weather, _public_holidays_df(), _school_holidays_df(), _ratio_table()
-        )
-
-
-def test_assemble_feature_history_raises_when_station_missing_from_ratio_table() -> (
-    None
-):
-    raw = _raw_bike_df()
-    weather = _weather_wide_df(raw["datetime"])
-
-    with pytest.raises(InferenceError):
-        assemble_feature_history(
-            raw,
-            weather,
-            _public_holidays_df(),
-            _school_holidays_df(),
-            _ratio_table(station_id=99999),
+            raw, weather, _public_holidays_df(), _school_holidays_df()
         )
 
 
