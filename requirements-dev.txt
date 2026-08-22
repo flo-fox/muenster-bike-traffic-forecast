@@ -1,0 +1,9 @@
+# Dev-only tools, not needed by the deployed Streamlit app or the daily
+# email — kept separate from requirements.txt so the deployed app doesn't
+# pull in a browser-automation dependency it never uses.
+#
+# playwright: used for one-off dashboard screenshots/visual verification
+# (see .claude/skills/run-dashboard). After `pip install -r
+# requirements-dev.txt`, also run `playwright install chromium` once to
+# fetch the browser binary (not a pip dependency, downloaded separately).
+playwright==1.62.0
