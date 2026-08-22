@@ -405,6 +405,11 @@ def test_format_email_body_flags_stale_station_in_table_and_summary() -> None:
     assert "Note:" in body  # per-station staleness note in "Notable deviations"
 
 
+def test_format_email_body_includes_repo_link() -> None:
+    body = daily_report.format_email_body(date(2026, 8, 19), [], [], {}, [])
+    assert daily_report.PROJECT_REPO_URL in body
+
+
 # ---------------------------------------------------------------------------
 # format_email_body_html
 # ---------------------------------------------------------------------------
@@ -444,6 +449,11 @@ def test_format_email_body_html_flags_stale_station_in_table_and_summary() -> No
     assert "STALE" in body
     assert "1 stale" in body
     assert "Note:" in body
+
+
+def test_format_email_body_html_includes_repo_link() -> None:
+    body = daily_report.format_email_body_html(date(2026, 8, 19), [], [], {}, [])
+    assert f'href="{daily_report.PROJECT_REPO_URL}"' in body
 
 
 def test_format_email_body_html_escapes_untrusted_text() -> None:
