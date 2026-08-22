@@ -38,6 +38,9 @@ from muenster_bike_forecast import inference
 from muenster_bike_forecast.data.bike_counts import Station
 
 TOP_N_DEVIATIONS: Final[int] = 3
+PROJECT_REPO_URL: Final[str] = (
+    "https://github.com/flo-fox/muenster-bike-traffic-forecast"
+)
 YESTERDAY_LOOKBACK: Final[pd.Timedelta] = pd.Timedelta(hours=24)
 # Same threshold and Europe/Berlin-local convention as
 # dashboard_common.STALENESS_WARNING_THRESHOLD / pages/station_forecast.py -
@@ -571,6 +574,7 @@ def format_email_body(
         "single reading - not directly comparable to the model's own "
         "published single-point MAE/RMSE."
     )
+    lines.append(f"View this project on GitHub: {PROJECT_REPO_URL}")
     return "\n".join(lines)
 
 
@@ -712,5 +716,7 @@ def format_email_body_html(
         "daily total over a rolling 24h window, not a single reading - not "
         "directly comparable to the model's own published single-point "
         "MAE/RMSE.</p>"
+        f'<p style="font-size:0.85em;color:#666;">View this project on '
+        f'<a href="{html.escape(PROJECT_REPO_URL)}">GitHub</a>.</p>'
         "</body></html>"
     )
