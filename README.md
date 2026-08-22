@@ -68,6 +68,22 @@ for the selected station. No API keys or credentials needed. Deployed on
 [Streamlit Community Cloud](https://streamlit.io/cloud) from this public
 repo.
 
+### Screenshots
+
+**Station forecast** — live 24h-ahead forecast for one station, with the
+observed history and forecast curve:
+
+![Station forecast page](docs/screenshots/station_forecast.png)
+
+**Station comparison** — actual (last 24h) vs. predicted (next 24h)
+traffic across all stations:
+
+![Station comparison page](docs/screenshots/station_comparison.png)
+
+**City map** — the same comparison, plotted geographically:
+
+![City map page](docs/screenshots/city_map.png)
+
 ## Daily forecast-accuracy email
 
 A scheduled GitHub Actions workflow (`.github/workflows/daily_forecast_email.yml`,
