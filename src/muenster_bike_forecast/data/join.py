@@ -269,8 +269,22 @@ def join_station_weather(
     )
 
     new_weather_columns = [c for c in weather_sorted.columns if c != timestamp_col]
+    # Built via an empty (0-row) reindex of `weather_sorted` rather than
+    # assigning `pd.NA` to each column directly - that would coerce every
+    # numeric weather column to `object` dtype (pandas has no single null
+    # sentinel that preserves float64/int64/datetime64 dtype simultaneously
+    # across a plain assignment), which then propagates to the `matched`
+    # half after `pd.concat` below since dtypes must unify across the two
+    # frames being concatenated. Reindexing preserves each column's
+    # original dtype (upcasting float64/int64 to accommodate NaN exactly
+    # as `merge_asof`'s own tolerance-based nulls already do, and keeping
+    # `weather_timestamp` as a real NaT-bearing datetime column) so this
+    # never-matched half stays dtype-consistent with the matched half.
+    null_weather = (
+        weather_sorted[new_weather_columns].iloc[0:0].reindex(unmatchable.index)
+    )
     for col in new_weather_columns:
-        unmatchable[col] = pd.NA
+        unmatchable[col] = null_weather[col]
 
     result = pd.concat([matched, unmatchable], ignore_index=True)
     result = result.sort_values("_join_row_id").drop(columns="_join_row_id")

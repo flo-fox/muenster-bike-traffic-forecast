@@ -66,8 +66,7 @@ from muenster_bike_forecast.modeling.model_table import ModelTableError
 
 logger = logging.getLogger(__name__)
 
-MODEL_PATH: Final[Path] = PROJECT_ROOT / "models" / "production_random_forest.joblib"
-RATIO_TABLE_PATH: Final[Path] = PROJECT_ROOT / "models" / "weekend_weekday_ratio.csv"
+MODEL_PATH: Final[Path] = PROJECT_ROOT / "models" / "production_lightgbm.joblib"
 
 # Duplicated from dashboard_common.FETCH_ERRORS rather than imported, so this
 # script never pulls in `streamlit` (dashboard_common imports it) into a
@@ -171,7 +170,6 @@ def main() -> None:
     as_of = date.today()
     stations = list_stations()
     model = joblib.load(MODEL_PATH)
-    ratio_table = pd.read_csv(RATIO_TABLE_PATH)
     weather_wide_df = combine_weather_parameters(
         {
             parameter: fetch_hourly_weather(parameter, period="recent")
@@ -192,7 +190,6 @@ def main() -> None:
                 report = daily_report.build_station_report(
                     station,
                     model,
-                    ratio_table,
                     public_holidays_df,
                     school_holidays_df,
                     weather_wide_df,

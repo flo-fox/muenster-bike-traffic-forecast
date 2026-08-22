@@ -73,10 +73,6 @@ def _school_holidays_df() -> pd.DataFrame:
     )
 
 
-def _ratio_table() -> pd.DataFrame:
-    return pd.DataFrame({"station_id": [STATION_ID], "weekend_weekday_ratio": [0.65]})
-
-
 def _dummy_window_context(
     window_start: str = "2024-06-10 08:00", window_end: str = "2024-06-11 08:00"
 ) -> daily_report.WindowContext:
@@ -198,7 +194,6 @@ def test_build_station_report_computes_daily_totals() -> None:
     report = daily_report.build_station_report(
         station,
         _FakeModel(),
-        _ratio_table(),
         _public_holidays_df(),
         _school_holidays_df(),
         weather,
@@ -233,7 +228,6 @@ def test_build_station_report_flags_stale_data() -> None:
     report = daily_report.build_station_report(
         station,
         _FakeModel(),
-        _ratio_table(),
         _public_holidays_df(),
         _school_holidays_df(),
         weather,
@@ -258,7 +252,6 @@ def test_build_station_report_degrades_gracefully_without_yesterday_window() -> 
     report = daily_report.build_station_report(
         station,
         _FakeModel(),
-        _ratio_table(),
         _public_holidays_df(),
         _school_holidays_df(),
         weather,
@@ -294,7 +287,6 @@ def test_build_station_report_actual_total_skips_gaps_within_window() -> None:
     report = daily_report.build_station_report(
         station,
         _FakeModel(),
-        _ratio_table(),
         _public_holidays_df(),
         _school_holidays_df(),
         weather,

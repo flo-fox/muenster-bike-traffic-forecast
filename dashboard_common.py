@@ -49,8 +49,7 @@ from muenster_bike_forecast import inference
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-MODEL_PATH = PROJECT_ROOT / "models" / "production_random_forest.joblib"
-RATIO_TABLE_PATH = PROJECT_ROOT / "models" / "weekend_weekday_ratio.csv"
+MODEL_PATH = PROJECT_ROOT / "models" / "production_lightgbm.joblib"
 STATION_LOCATIONS_PATH = PROJECT_ROOT / "data" / "processed" / "station_locations.csv"
 
 # The source repo publishes new data roughly daily (verified via its own
@@ -89,12 +88,6 @@ FETCH_ERRORS = (
 def load_model() -> object:
     """Loads the committed production model once per app process."""
     return joblib.load(MODEL_PATH)
-
-
-@st.cache_resource(show_spinner=False)
-def load_ratio_table() -> pd.DataFrame:
-    """Loads the committed static per-station weekend/weekday ratio table."""
-    return pd.read_csv(RATIO_TABLE_PATH)
 
 
 @st.cache_resource(show_spinner=False)
@@ -144,12 +137,11 @@ def build_forecast(station: Station, as_of: date) -> dict[str, object]:
 
     Raises:
         inference.InferenceError: if no recent bike-count data is available
-            for `station`, the assembled feature row cannot be scored, or a
-            committed model artifact (the model file, the ratio table) is
-            missing on this server - translated from the underlying
-            `FileNotFoundError` so callers only need to catch one error
-            family, and so the artifact's server-local path never reaches a
-            page's error message.
+            for `station`, the assembled feature row cannot be scored, or
+            the committed model artifact is missing on this server -
+            translated from the underlying `FileNotFoundError` so callers
+            only need to catch one error family, and so the artifact's
+            server-local path never reaches a page's error message.
     """
     frames = []
     for year, month in inference.months_needed(as_of):
@@ -168,14 +160,11 @@ def build_forecast(station: Station, as_of: date) -> dict[str, object]:
     weather_wide_df = cached_recent_weather()
     public_holidays_df, school_holidays_df = cached_calendar_tables(as_of.year)
     try:
-        ratio_table = load_ratio_table()
-
         history = inference.assemble_feature_history(
             raw_bike_df,
             weather_wide_df,
             public_holidays_df,
             school_holidays_df,
-            ratio_table,
         )
         current_row = inference.latest_feature_row(history, station.station_id)
         model = load_model()

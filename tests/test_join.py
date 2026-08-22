@@ -7,6 +7,7 @@ real `data/raw/` files.
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -255,6 +256,41 @@ def test_join_station_weather_leaves_dst_edge_case_rows_unmatched() -> None:
 
     assert pd.isna(joined["timestamp"].iloc[0])
     assert pd.isna(joined["weather_air_temperature_c"].iloc[0])
+
+
+def test_join_station_weather_keeps_numeric_dtype_when_mixing_matched_and_unmatched_rows() -> (
+    None
+):
+    """Regression test: mixing matched/unmatched rows must not degrade dtype.
+
+    A prior implementation assigned `pd.NA` directly to the unmatched
+    half's weather columns, which forced them to `object` dtype - and
+    `pd.concat` with the matched half (float64) then silently degraded
+    the *whole* combined column to `object`, even for genuinely-matched
+    numeric values. Downstream consumers that don't tolerate `object`
+    dtype (e.g. `LGBMRegressor.predict`, which requires int/float/bool)
+    would fail on this, even though every individual value was still
+    numerically correct.
+    """
+    bike_naive = pd.DataFrame(
+        {
+            "station_id": ["S1", "S1"],
+            "datetime": pd.to_datetime(
+                [
+                    "2024-01-01 09:00",
+                    "2024-03-31 02:30",
+                ]  # one normal, one DST edge case
+            ),
+        }
+    )
+    bike = localize_bike_timestamps(bike_naive)
+    weather = _weather_df(["2024-01-01 08:00:00+00:00"], [15.0])
+
+    joined = join_station_weather(bike, weather)
+
+    assert joined["weather_air_temperature_c"].dtype == np.dtype("float64")
+    assert joined["weather_air_temperature_c"].iloc[0] == 15.0
+    assert pd.isna(joined["weather_air_temperature_c"].iloc[1])
 
 
 def test_join_station_weather_preserves_original_row_order() -> None:
