@@ -55,6 +55,14 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
+For local dev tooling not needed by the deployed app (currently just
+Playwright, for dashboard screenshots/visual verification):
+
+```bash
+pip install -r requirements-dev.txt
+playwright install chromium
+```
+
 ## Running the dashboard
 
 ```bash
