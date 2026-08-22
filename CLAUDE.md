@@ -412,10 +412,18 @@ Before treating a step as done, check it from three angles:
   match. Same session, at the user's request, added a new "Inbound vs.
   outbound imbalance" section to notebook 07 (`compute_directional_totals`
   in `analysis/descriptive.py`) — Weseler Straße's ~28% imbalance is the
-  standout; Kanalpromenade Abschnitt 6/Gasselstiege (~62%, ~50%) and
-  Bismarckallee (~10%) are flagged unreliable (concurrent-channel-overlap
-  and mid-history relabeling issues respectively, not fixed, honestly
-  documented instead).
+  standout; Kanalpromenade Abschnitt 6 (~62%) and Bismarckallee (~7%) are
+  flagged unreliable (concurrent-channel-overlap and mid-history
+  relabeling issues respectively, not fixed, honestly documented
+  instead). Gasselstiege's specific percentage originally quoted here
+  (~50%) was corrected 2026-08-22 - the current, correctly-computed
+  figure is ~0.1% (essentially balanced), not ~50%; the earlier number
+  was a transcription error from before this session's live-data
+  refresh, not a change in the underlying data. The methodological
+  caveat (concurrent, not sequential, channel generations at this
+  station - see `compute_directional_totals`'s docstring) still applies
+  and still means any single number quoted for this station, including
+  this corrected one, should be treated with the same caution as before.
 
   The retrain that followed was explicitly two-staged, per the user's
   request, to isolate cause from coincidence:
