@@ -119,14 +119,54 @@ Unlike the dashboard, this **does** need credentials — set these as
 See `.env.example` for local dry runs (`python scripts/send_daily_email.py`
 with these four variables exported).
 
+## Local MCP forecast-query server
+
+`scripts/mcp_forecast_server.py` is a local-only (stdio transport) [MCP](https://modelcontextprotocol.io)
+server exposing three tools for ad hoc forecast queries from a chat
+session, wrapping the same live-inference/accuracy-check logic the
+dashboard and daily email already use — no separate model, no separate
+fetch path:
+
+- `list_stations` — every counting station with live data available.
+- `get_forecast(station_id, as_of=None)` — a live 24h-ahead forecast for
+  one station (predicted next-24h total, peak time/value, actual last-24h
+  total for context).
+- `get_actual_vs_predicted(station_id, as_of=None)` — how the model's
+  most recent prediction compares to what actually happened. This
+  project keeps no forecast-history storage, so it always compares the
+  latest resolvable ~24h window, not an arbitrary past date.
+
+**Local/stdio only, deliberately** — reachable only from sessions on this
+machine, no hosting cost, no auth needed. A remote/HTTP-reachable version
+(e.g. for the Claude mobile app) is a separate, larger piece of work, not
+built here.
+
+Setup:
+
+```bash
+pip install -r requirements-dev.txt
+```
+
+Register it with Claude Code (verified against the current `claude mcp add`
+CLI as of this session):
+
+```bash
+claude mcp add muenster-bike-forecast -- /path/to/.venv/Scripts/python.exe scripts/mcp_forecast_server.py
+```
+
+(Use the venv's actual `python`/`python.exe` path so the server sees the
+project's installed dependencies — a bare `python` may resolve to a
+different interpreter.) Or run it directly for local testing without
+registering: `python scripts/mcp_forecast_server.py`.
+
 ## Layout
 
 - `notebooks/` — numbered analysis/modeling notebooks
 - `src/muenster_bike_forecast/` — reusable data loading, feature engineering,
   modeling, and live-inference code
 - `app.py` — Streamlit dashboard entry point
-- `scripts/` — one-shot orchestration entry points (currently just the
-  daily forecast-accuracy email)
+- `scripts/` — one-shot orchestration entry points (the daily
+  forecast-accuracy email, the local MCP forecast-query server)
 - `.github/workflows/` — scheduled CI (the daily email)
 - `models/` — mostly gitignored (regenerate from notebooks), except
   `production_lightgbm.joblib`, which is committed since the deployed
