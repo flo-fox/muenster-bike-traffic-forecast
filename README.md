@@ -173,3 +173,48 @@ registering: `python scripts/mcp_forecast_server.py`.
   dashboard needs it directly
 - `data/raw/` — raw downloaded data (gitignored, regenerate from notebooks)
 - `tests/` — unit tests
+
+## A note on this project, written August 2026
+
+My primary goal with this project was to get to know agentic development,
+and Claude Code specifically.
+
+The way I worked with Claude: small steps with checkpoints, decisions
+written down as we went, structured review and audit steps built into the
+process. But I should be honest about what that review actually was — I
+didn't do a concrete code review myself, and I don't have a deep
+understanding of the code. Claude wrote it. The review that happened was
+procedural — checklists, audit passes — not me personally reading and
+verifying the logic.
+
+That points to something bigger: the role of the technical implementer
+seems to be shifting. Working this way, you end up acting more like a
+feature or product manager than a technical implementer — because agentic
+AI can do that part itself.
+
+Working with generative AI in an agentic system like this showed me
+something concrete about where things stand right now. There's a real set
+of things I couldn't have built on my own. And a bigger set of things I
+could have done myself, just a lot slower. Both are genuine wins.
+
+What it hasn't solved yet is the last bit of polish. At one point a bug
+quietly double-counted every bike in the target variable, and it got past
+the review process — neither Claude nor I caught it at the time. Given
+that I wasn't reviewing the code myself, that's maybe not surprising in
+hindsight.
+
+Which is probably the real lesson: good tests matter. Both in the code
+itself, and in the review processes the tooling brings along — hooks,
+subagents, skills. And on top of that, human review, especially at the
+critical points, because the tooling alone didn't catch everything here.
+
+Context is key, too. The real challenge is weaving agentic systems into
+the development process safely and cleanly. Without that context, though,
+working with agents stays a patchwork — isolated pieces that never quite
+add up.
+
+For a normal business setting, the right approach is probably a middle
+ground: not full autonomy with no code review, but also not a return to
+working without AI. Agentic AI is a real productivity gain, but not one
+to run unsupervised yet — someone needs to actually understand and check
+the code it writes, which wasn't fully the case here.
