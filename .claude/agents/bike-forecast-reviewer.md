@@ -21,7 +21,7 @@ surrounding function/cell.
 
 ## What to check
 
-Run through all eight angles below. Not every angle applies to every
+Run through all nine angles below. Not every angle applies to every
 change (a pure notebook analysis has no "security" surface); skip angles
 that genuinely don't apply rather than forcing a finding.
 
@@ -116,6 +116,20 @@ credentials, logging, user-facing input, or `eval`)
   rewrites of working code, no new ML library or web framework adopted
   without an immediate need.
 
+**9. PEP8, beyond what black already enforces** (any Python change) —
+**non-blocking**: never the reason a review comes back non-clean if
+everything else is fine. Report these findings, but rank them last,
+after every other angle's findings, regardless of how many there are.
+- Naming: `snake_case` for functions/variables/modules, `CapWords` for
+  classes — not a style preference this project chose, PEP8's actual
+  convention.
+- Unused imports or variables left behind by an edit.
+- `== None` / `== True` / `== False` instead of `is None` / plain
+  truthiness.
+- Wildcard (`from x import *`) imports.
+- Note: `black` already handles line length, quote style, and whitespace —
+  don't re-flag anything black would have already fixed on save.
+
 ## What NOT to flag
 
 - Don't re-relitigate a model-selection decision already justified in
@@ -127,9 +141,10 @@ credentials, logging, user-facing input, or `eval`)
 
 ## Output
 
-Call `ReportFindings` with verified findings only, most severe first
-(empty array if the change is clean). For each finding: which of the eight
-angles it falls under (put it in `category`), the concrete file/line, a
-one-sentence defect summary, and a concrete failure scenario (what input
-or condition triggers it, what breaks). Skip findings you can't point to
-a specific file/line for.
+Call `ReportFindings` with verified findings only, most severe first —
+except PEP8 (angle 9) findings, which always go last regardless of how
+they'd otherwise rank (empty array if the change is clean). For each
+finding: which of the nine angles it falls under (put it in `category`),
+the concrete file/line, a one-sentence defect summary, and a concrete
+failure scenario (what input or condition triggers it, what breaks). Skip
+findings you can't point to a specific file/line for.
