@@ -347,6 +347,24 @@ Before treating a step as done, check it from three angles:
   hardcoded reference requires re-running the notebook that hardcodes
   it) for a display-only inconsistency; pick up here if those notebooks
   are touched again for another reason anyway.
+
+  **Resolved 2026-08-23: fixed via a shared metrics registry**
+  (`src/muenster_bike_forecast/modeling/metrics_registry.py`,
+  `data/model_metrics/registry.csv`, committed). Every notebook now
+  writes its own overall+per-station metrics to the registry
+  immediately after computing them, and every downstream notebook reads
+  via `read_metrics(...)` instead of hardcoding a copy — this specific
+  staleness pattern cannot recur silently. Migrated all 9 affected
+  notebooks (08 write-only; 09, 10, 11, 14, 15, 16, 17, 18 read+write),
+  re-ran the full chain, and confirmed notebook 16's reproduction check
+  (mentioned above) now reads live from the registry and prints `True`.
+  Two exceptions left as prose, deliberately not converted: notebook
+  17's citation of notebook 15's "weekend ratio in isolation" number
+  (ambiguous — none of notebook 15's four trained variants match that
+  description exactly) and notebook 16 Section 7's hyperparameter-sweep
+  numbers (sourced from an untracked, gitignored external script, a
+  different pattern from this fix). See the "total_count double-counting
+  bug" entry below for the two incidents that motivated this fix.
 - **Daily forecast-accuracy email built (2026-08-19,
   `feature/daily-forecast-email` branch)**: the "daily email" half of the
   2026-07-26 dashboard decision (GitHub Actions + Gmail app password —
@@ -490,7 +508,11 @@ Before treating a step as done, check it from three angles:
     until that architectural gap is closed (e.g. by having each
     notebook write its metrics to a shared file instead of hardcoding
     cross-notebook constants — a real fix for a bug class that has now
-    caused two separate incidents, not yet built).
+    caused two separate incidents; **resolved 2026-08-23**, see the
+    "shared metrics registry" resolution note under the 2026-08-17
+    embargo entry above for the fix, and CLAUDE.md's current numbers
+    throughout this file now come from that live registry rather than
+    any stale hardcoded copy).
   - **Resolved 2026-08-22: switched to LightGBM.** The question below
     ("which model to actually ship") was open for a short while after
     the ranking reversal above - kept here rather than deleted, since it
