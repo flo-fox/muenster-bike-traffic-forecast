@@ -167,9 +167,17 @@ registering: `python scripts/mcp_forecast_server.py`.
 - `app.py` — Streamlit dashboard entry point
 - `scripts/` — one-shot orchestration entry points (the daily
   forecast-accuracy email, the local MCP forecast-query server)
-- `.github/workflows/` — scheduled CI (the daily email)
+- `.github/workflows/` — CI (`ci.yml`: black + pytest on push/PR) and the
+  scheduled daily email (`daily_forecast_email.yml`)
 - `models/` — mostly gitignored (regenerate from notebooks), except
   `production_lightgbm.joblib`, which is committed since the deployed
   dashboard needs it directly
 - `data/raw/` — raw downloaded data (gitignored, regenerate from notebooks)
+- `data/processed/` — small derived/cached tables committed to the repo
+  (currently `station_locations.csv`, geocoded once and reused rather than
+  re-fetched)
+- `data/model_metrics/` — the shared cross-notebook metrics registry
+  (`registry.csv`, committed) that notebooks 08-18 write to and read from,
+  so every notebook's displayed metrics come from one live source instead
+  of hardcoded copies
 - `tests/` — unit tests

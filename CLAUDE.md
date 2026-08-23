@@ -35,6 +35,9 @@ regression experiments. Goal here is an actual, active forecasting tool.
 - Streamlit for the live dashboard (`app.py`, `dashboard_common.py`, `pages/`)
 - `anthropic` SDK for the daily forecast-accuracy email's AI explanations
   (`scripts/send_daily_email.py`, direct API call — see "Planned additions")
+- `mcp` SDK for a local (stdio) MCP server exposing ad hoc forecast queries
+  from a chat session (`scripts/mcp_forecast_server.py`,
+  `src/muenster_bike_forecast/mcp_tools.py` — see "Planned additions")
 
 ## Model selection rationale
 Why tree-ensembles and Prophet were tried, and why the classic
@@ -322,7 +325,15 @@ Before treating a step as done, check it from three angles:
   `max_samples=0.30`, base feature set + `weekend_weekday_ratio`,
   notebook 17), down from the previously-quoted 27.07/53.70 — still the
   best model tried, still the recommended production config, no
-  conclusion in this file changes.
+  conclusion in this file changes. **Superseded, both the numbers and
+  the production-model choice**: the numbers here predate the
+  2026-08-21 `total_count` double-counting fix and the 2026-08-22 data
+  refresh below, both of which changed every model's metrics
+  substantially, and the production model has since switched to
+  LightGBM — see the "Resolved 2026-08-22: switched to LightGBM" entry
+  under "total_count double-counting bug" further down, and the
+  "Production model: LightGBM" tech-stack bullet at the top of this
+  file, for the current state.
 
   One real bug surfaced along the way, now fixed: notebook 16 has a
   built-in reproduction check against notebook 14's number
@@ -393,9 +404,10 @@ Before treating a step as done, check it from three angles:
     alternative (see the "Next dev priorities" project memory) and
     rejected for this specific use case: an MCP server would need to run
     persistently to be reachable from a one-shot cron job, which doesn't
-    fit a process that runs once daily and exits. MCP remains a live,
-    separate idea for other future use cases (e.g. interactive
-    forecast-accuracy queries from a chat session).
+    fit a process that runs once daily and exits. That other use case
+    (interactive forecast-accuracy queries from a chat session) has
+    since been built separately — see the "Local MCP forecast-query
+    server" entry below.
   - **A Claude Pro/Max subscription does not cover this** — confirmed
     with the user; `ANTHROPIC_API_KEY` needs its own
     console.anthropic.com account/billing, set as a GitHub Actions
@@ -568,6 +580,28 @@ Before treating a step as done, check it from three angles:
     baselines, metric correctness, effect size vs. noise; used
     extensively during this retrain to verify the ranking reversal
     above). Both on-demand only, not wired into any hook.
+- **Local MCP forecast-query server built (2026-08-23,
+  `feature/mcp-forecast-server` branch)**: the "interactive
+  forecast-accuracy queries from a chat session" use case flagged as
+  deferred in the daily-email entry above is now built.
+  `scripts/mcp_forecast_server.py` (thin MCP-protocol entry point) +
+  `src/muenster_bike_forecast/mcp_tools.py` (reusable, unit-tested logic
+  — same "orchestration script + reusable module" split as
+  `daily_report.py`/`send_daily_email.py`) expose three tools:
+  `list_stations`, `get_forecast(station_id, as_of=None)`, and
+  `get_actual_vs_predicted(station_id, as_of=None)` — all wrapping the
+  same live-inference/accuracy-check pipeline the dashboard and daily
+  email already use, no separate model or fetch path. Deliberately
+  local/stdio transport only (reachable only from sessions on this
+  machine, no hosting cost, no auth needed) — a remote/HTTP-reachable
+  version is a separate, larger piece of work, not built here.
+  Deliberately does not import `dashboard_common` (pulls in `streamlit`)
+  or `scripts/send_daily_email` (pulls in email/Anthropic-API
+  dependencies this server doesn't need) — duplicates the small
+  "fetch one station's raw history" helper instead, the same decoupling
+  `send_daily_email.py` already does for the same reason. See
+  README.md's "Local MCP forecast-query server" section for setup/
+  registration instructions.
 
 ## What Claude should avoid
 - Do not add speculative features beyond what is asked.

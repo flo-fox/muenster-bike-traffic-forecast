@@ -80,16 +80,15 @@ MIN_HISTORY_LOOKBACK: Final[pd.Timedelta] = pd.Timedelta(days=35)
 
 # As-of joining bike-count rows to hourly weather: a row further than this
 # past the nearest weather reading is left with null weather columns rather
-# than matched to stale data (same tolerance as notebooks 03/06/17).
+# than matched to stale data (same tolerance as notebooks 03/06/17/18).
 WEATHER_JOIN_TOLERANCE: Final[pd.Timedelta] = pd.Timedelta(hours=2)
 
 
 class InferenceError(Exception):
     """Raised when a live feature row cannot be assembled or predicted from.
 
-    Covers empty/unusable input data, a station missing from the
-    weekend/weekday ratio table, and a station with no evaluable (non-null
-    `total_count`) row to predict from.
+    Covers empty/unusable input data and a station with no evaluable
+    (non-null `total_count`) row to predict from.
     """
 
 
