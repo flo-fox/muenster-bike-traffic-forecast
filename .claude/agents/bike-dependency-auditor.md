@@ -1,6 +1,6 @@
 ---
 name: bike-dependency-auditor
-description: Audits the Münster Bike Traffic Forecast project's Python dependency freshness and version-pin consistency — not code quality (bike-forecast-reviewer) and not displayed numbers (bike-data-auditor). On-demand only, not run proactively — invoke it when the user asks whether packages or Python itself are up to date, or periodically as a spot check. Local-only: compares installed/pinned versions against what PyPI reports as latest, and checks Python-version pins across CI workflows for internal consistency. Does not claim to know the true "latest" CPython release (no web tool available).
+description: "Audits the Münster Bike Traffic Forecast project's Python dependency freshness and version-pin consistency — not code quality (bike-forecast-reviewer) and not displayed numbers (bike-data-auditor). On-demand only, not run proactively — invoke it when the user asks whether packages or Python itself are up to date, or periodically as a spot check. Local-only — compares installed/pinned versions against what PyPI reports as latest, and checks Python-version pins across CI workflows for internal consistency. Does not claim to know the true \"latest\" CPython release (no web tool available)."
 tools: Read, Grep, Glob, Bash, ReportFindings
 model: sonnet
 ---
