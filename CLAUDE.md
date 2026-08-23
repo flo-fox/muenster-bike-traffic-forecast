@@ -386,7 +386,7 @@ Before treating a step as done, check it from three angles:
   check every station's forecast from ~24h ago against today's actual
   reading, show today's fresh 24h-ahead forecast too, and — new since
   the original 2026-07-26 plan — ask Claude (`claude-haiku-4-5`, direct
-  API call) for a short, context-grounded explanation of the top 5
+  API call) for a short, context-grounded explanation of the top 3
   biggest deviations. Runs via
   `.github/workflows/daily_forecast_email.yml`, ~09:00 Münster local
   time (two DST-gated cron entries, since cron itself isn't DST-aware).
@@ -428,9 +428,11 @@ Before treating a step as done, check it from three angles:
     catch (skip and continue, same pattern as
     `dashboard_common.build_fleet_snapshot`) plus a small 0.2s courtesy
     delay between station fetches.
-  - **Top-5-by-absolute-error default** (`daily_report.TOP_N_DEVIATIONS`)
-    — user-confirmed, but arbitrary; revisit if 5 turns out too many/few
-    once real emails start arriving.
+  - **Top-3-by-absolute-error default** (`daily_report.TOP_N_DEVIATIONS`)
+    — originally shipped as top-5, trimmed to top 3 in `a9dfea7`
+    (2026-08-21, alongside switching the email to HTML) when the daily
+    email moved to HTML; still user-confirmed but arbitrary — revisit if
+    3 turns out too many/few once real emails start arriving.
 - **`total_count` double-counting bug found, fixed, and the full model
   chain retrained (2026-08-21/22, `fix/channel-double-counting` branch)**:
   a user manually cross-checking a dashboard number (Neutor: 146) against

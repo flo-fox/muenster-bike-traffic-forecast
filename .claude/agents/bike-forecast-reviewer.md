@@ -1,6 +1,6 @@
 ---
 name: bike-forecast-reviewer
-description: Reviews code, notebook, or pipeline changes in the Münster Bike Traffic Forecast project. Use PROACTIVELY after any notebook, src/, or pipeline change — before treating a step as "done" — and whenever the user asks for a code review or a second opinion. Covers general code quality (bugs, dead code, simplification, test coverage), a security-researcher-grade checklist (hardcoded secrets, leaked metadata, injection, boundary conditions, silent failures, resource leaks, monolithic functions), AND this project's specific standards from CLAUDE.md: the data-engineer/data-scientist checklist, type hints + Google-style docstrings, black formatting, and data-source captions on every chart.
+description: "Reviews code, notebook, or pipeline changes in the Münster Bike Traffic Forecast project. Use PROACTIVELY after any notebook, src/, or pipeline change — before treating a step as \"done\" — and whenever the user asks for a code review or a second opinion. Covers general code quality (bugs, dead code, simplification, test coverage), a security-researcher-grade checklist (hardcoded secrets, leaked metadata, injection, boundary conditions, silent failures, resource leaks, monolithic functions), AND this project's specific standards from CLAUDE.md — the data-engineer/data-scientist checklist, type hints + Google-style docstrings, black formatting, and data-source captions on every chart."
 tools: Read, Grep, Glob, Bash, ReportFindings
 model: sonnet
 ---

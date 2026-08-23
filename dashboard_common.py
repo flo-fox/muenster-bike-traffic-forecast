@@ -43,6 +43,7 @@ from muenster_bike_forecast.data.weather import (
     fetch_hourly_weather,
 )
 from muenster_bike_forecast.modeling.lag_features import LagFeatureError
+from muenster_bike_forecast.modeling.metrics_registry import read_metrics
 from muenster_bike_forecast.modeling.model_table import ModelTableError
 from muenster_bike_forecast import inference
 
@@ -51,6 +52,12 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parent
 MODEL_PATH = PROJECT_ROOT / "models" / "production_lightgbm.joblib"
 STATION_LOCATIONS_PATH = PROJECT_ROOT / "data" / "processed" / "station_locations.csv"
+METRICS_REGISTRY_PATH = PROJECT_ROOT / "data" / "model_metrics" / "registry.csv"
+
+# Must match notebook 18's own NOTEBOOK_ID/model_name arguments to
+# write_metrics - see modeling/metrics_registry.py.
+PRODUCTION_MODEL_NOTEBOOK_ID = "18_lightgbm_production_model"
+PRODUCTION_MODEL_NAME = "lightgbm_production"
 
 # The source repo publishes new data roughly daily (verified via its own
 # commit history); flag data older than this as stale rather than silently
@@ -94,6 +101,26 @@ def load_model() -> object:
 def load_station_locations() -> pd.DataFrame:
     """Loads the committed station-coordinate table (see notebook 07)."""
     return pd.read_csv(STATION_LOCATIONS_PATH, dtype={"station_id": str})
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_production_model_metrics() -> tuple[float, float]:
+    """Loads the production model's overall (MAE, RMSE) from the shared registry.
+
+    Reads live from `data/model_metrics/registry.csv` rather than a
+    hardcoded string, so this can't go stale the way notebooks 10/16's
+    hardcoded cross-notebook metric copies once did (see CLAUDE.md's
+    "total_count double-counting bug" entry). Uses `st.cache_data` (like
+    this file's other CSV-shaped loaders), not `st.cache_resource` - the
+    return value is a small immutable tuple, not a long-lived resource,
+    and `st.cache_resource` has no ttl here, so a registry update
+    wouldn't be picked up without a full app-process restart.
+    """
+    overall, _ = read_metrics(
+        METRICS_REGISTRY_PATH, PRODUCTION_MODEL_NOTEBOOK_ID, PRODUCTION_MODEL_NAME
+    )
+    row = overall.iloc[0]
+    return float(row["mae"]), float(row["rmse"])
 
 
 @st.cache_data(ttl=3600, show_spinner="Loading station list…")

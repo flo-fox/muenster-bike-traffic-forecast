@@ -12,16 +12,19 @@ from dashboard_common import (
     STALENESS_WARNING_THRESHOLD,
     build_forecast,
     cached_list_stations,
+    load_production_model_metrics,
     render_footer,
     render_forecast_chart,
 )
 from muenster_bike_forecast.data.bike_counts import BikeCountDataError
 
 st.title("📍 Station forecast")
+_production_mae, _production_rmse = load_production_model_metrics()
 st.caption(
     "24h-ahead bike-traffic prediction per counting station, from live "
     "bike-count and weather data. Production model: LightGBM, "
-    "MAE 10.46 / RMSE 17.99 on held-out data (see `notebooks/18_lightgbm_production_model.ipynb`)."
+    f"MAE {_production_mae:.2f} / RMSE {_production_rmse:.2f} on held-out data "
+    "(see `notebooks/18_lightgbm_production_model.ipynb`)."
 )
 
 try:
