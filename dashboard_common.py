@@ -103,14 +103,18 @@ def load_station_locations() -> pd.DataFrame:
     return pd.read_csv(STATION_LOCATIONS_PATH, dtype={"station_id": str})
 
 
-@st.cache_resource(show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def load_production_model_metrics() -> tuple[float, float]:
     """Loads the production model's overall (MAE, RMSE) from the shared registry.
 
     Reads live from `data/model_metrics/registry.csv` rather than a
     hardcoded string, so this can't go stale the way notebooks 10/16's
     hardcoded cross-notebook metric copies once did (see CLAUDE.md's
-    "total_count double-counting bug" entry).
+    "total_count double-counting bug" entry). Uses `st.cache_data` (like
+    this file's other CSV-shaped loaders), not `st.cache_resource` - the
+    return value is a small immutable tuple, not a long-lived resource,
+    and `st.cache_resource` has no ttl here, so a registry update
+    wouldn't be picked up without a full app-process restart.
     """
     overall, _ = read_metrics(
         METRICS_REGISTRY_PATH, PRODUCTION_MODEL_NOTEBOOK_ID, PRODUCTION_MODEL_NAME
