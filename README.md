@@ -227,4 +227,4 @@ working without AI. Agentic AI is a real productivity gain, but not one
 to run unsupervised yet — someone needs to actually understand and check
 the code it writes, which wasn't fully the case here.
 
-Most of this project's Claude Code sessions were done with **Sonnet 5**, not Opus.
+Most of this project's Claude Code sessions were done with **Sonnet 5**, not Opus. A stronger model like Opus or Fable might have caught more, and some conclusions above could look different with one of those instead.
