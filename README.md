@@ -226,3 +226,5 @@ ground: not full autonomy with no code review, but also not a return to
 working without AI. Agentic AI is a real productivity gain, but not one
 to run unsupervised yet — someone needs to actually understand and check
 the code it writes, which wasn't fully the case here.
+
+Most of this project's Claude Code sessions were done with **Sonnet 5**, not Opus.
