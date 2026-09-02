@@ -227,4 +227,10 @@ working without AI. Agentic AI is a real productivity gain, but not one
 to run unsupervised yet — someone needs to actually understand and check
 the code it writes, which wasn't fully the case here.
 
+One more thing, and this one's just my opinion: I think AI devalues
+software as a product. Not the quality — the code here works. But when a
+model, a dashboard, a daily report and an MCP server come out of
+describing what I wanted, it starts to feel like anyone could write this.
+And what feels like anyone could write it is hard to sell.
+
 Most of this project's Claude Code sessions were done with **Sonnet 5**, not Opus. A stronger model like Opus or Fable might have caught more, and some conclusions above could look different with one of those instead.
